@@ -1,27 +1,28 @@
-mod message;
-use message::Message;
+use crate::message::Message;
 
-use bytes::Bytes;
+use bytes::{BufMut, BytesMut};
 use futures::prelude::*;
+use std::path::PathBuf;
 use tokio::net::TcpStream;
 use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 
-#[tokio::main]
-pub async fn main() {
-    // Bind a server socket
-    let socket = TcpStream::connect("127.0.0.1:8080").await.unwrap();
-
+pub async fn send(paths: &Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     // Delimit frames using a length header
+    let socket = TcpStream::connect("127.0.0.1:8080").await.unwrap();
     let length_delimited = FramedWrite::new(socket, LengthDelimitedCodec::new());
-
-    let m = Message {
-        body: Bytes::from("hello world"),
-    };
     let mut stream = tokio_serde::SymmetricallyFramed::new(
         length_delimited,
         tokio_serde::formats::SymmetricalBincode::<Message>::default(),
     );
 
     // Send the value
-    stream.send(m).await.unwrap()
+    for path in paths.iter() {
+        let b = path.to_str().unwrap().as_bytes();
+        let mut buf = BytesMut::with_capacity(1024);
+        buf.put(&b[..]);
+        let body = buf.freeze();
+        let m = Message { body: body };
+        stream.send(m).await.unwrap();
+    }
+    Ok(())
 }
