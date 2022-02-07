@@ -21,7 +21,10 @@ pub async fn send(paths: &Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>
         let mut buf = BytesMut::with_capacity(1024);
         buf.put(&b[..]);
         let body = buf.freeze();
-        let m = Message { body: body };
+        let m = Message {
+            from_sender: true,
+            body: body,
+        };
         stream.send(m).await.unwrap();
     }
     Ok(())
