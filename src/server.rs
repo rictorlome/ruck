@@ -1,4 +1,4 @@
-use crate::message::Message;
+use crate::message::{Message, MessageStream};
 
 use futures::prelude::*;
 use std::collections::HashMap;
@@ -7,17 +7,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
-use tokio_serde::SymmetricallyFramed;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 type Tx = mpsc::UnboundedSender<Message>;
 type Rx = mpsc::UnboundedReceiver<Message>;
-
-type MessageStream = SymmetricallyFramed<
-    Framed<TcpStream, LengthDelimitedCodec>,
-    Message,
-    tokio_serde::formats::SymmetricalBincode<Message>,
->;
 
 pub struct Shared {
     rooms: HashMap<String, RoomInfo>,
@@ -90,11 +82,7 @@ pub async fn handle_connection(
     socket: TcpStream,
     addr: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let length_delimited = Framed::new(socket, LengthDelimitedCodec::new());
-    let mut stream = tokio_serde::SymmetricallyFramed::new(
-        length_delimited,
-        tokio_serde::formats::SymmetricalBincode::<Message>::default(),
-    );
+    let mut stream = Message::to_stream(socket);
     let first_message = match stream.next().await {
         Some(Ok(msg)) => {
             println!("first msg: {:?}", msg);
@@ -105,12 +93,13 @@ pub async fn handle_connection(
             return Ok(());
         }
     };
-    let mut client = Client::new(first_message.from_sender, state.clone(), stream).await?;
+    let mut client = Client::new(true, state.clone(), stream).await?;
     // add client to state here
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {
                 println!("message received to client.rx {:?}", msg);
+                client.messages.send(msg).await?
             }
             result = client.messages.next() => match result {
                 Some(Ok(msg)) => {

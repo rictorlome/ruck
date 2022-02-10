@@ -17,6 +17,7 @@ pub enum Commands {
     Send {
         #[clap(required = true, parse(from_os_str))]
         paths: Vec<PathBuf>,
+        password: String,
     },
     #[clap(setting(AppSettings::ArgRequiredElseHelp))]
     Receive {

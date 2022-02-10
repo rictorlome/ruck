@@ -1,11 +1,12 @@
 mod cli;
 mod client;
+mod crypto;
 mod message;
 mod server;
 
 use clap::Parser;
 use cli::{Cli, Commands};
-use client::send;
+use client::{receive, send};
 use server::serve;
 use std::error::Error;
 
@@ -13,12 +14,13 @@ use std::error::Error;
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::parse();
     match &args.command {
-        Commands::Send { paths } => {
+        Commands::Send { paths, password } => {
             println!("Sending {:?}", paths);
-            send(&paths).await?;
+            send(&paths, password).await?;
         }
         Commands::Receive { password } => {
             println!("Receiving password {}", password);
+            receive(password).await?
         }
         Commands::Relay {} => {
             serve().await?;
