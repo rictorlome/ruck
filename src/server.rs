@@ -1,5 +1,7 @@
+use crate::crypto::first_msg;
 use crate::message::{Message, MessageStream};
 
+use anyhow::{anyhow, Result};
 use futures::prelude::*;
 use std::collections::HashMap;
 use std::io;
@@ -20,9 +22,9 @@ struct RoomInfo {
     sender_tx: Tx,
 }
 
-struct Client {
+struct Client<'a> {
     is_sender: bool,
-    messages: MessageStream,
+    messages: &'a mut MessageStream,
     rx: Rx,
 }
 
@@ -42,8 +44,12 @@ impl Shared {
     // }
 }
 
-impl Client {
-    async fn new(is_sender: bool, state: State, messages: MessageStream) -> io::Result<Client> {
+impl<'a> Client<'a> {
+    async fn new(
+        is_sender: bool,
+        state: State,
+        messages: &'a mut MessageStream,
+    ) -> io::Result<Client<'a>> {
         let (tx, rx) = mpsc::unbounded_channel();
         let room_info = RoomInfo { sender_tx: tx };
         state
@@ -60,7 +66,7 @@ impl Client {
     }
 }
 
-pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve() -> Result<()> {
     let addr = "127.0.0.1:8080".to_string();
     let listener = TcpListener::bind(&addr).await?;
     let state = Arc::new(Mutex::new(Shared::new()));
@@ -81,18 +87,9 @@ pub async fn handle_connection(
     state: Arc<Mutex<Shared>>,
     socket: TcpStream,
     addr: SocketAddr,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let mut stream = Message::to_stream(socket);
-    let first_message = match stream.next().await {
-        Some(Ok(msg)) => {
-            println!("first msg: {:?}", msg);
-            msg
-        }
-        _ => {
-            println!("no first message");
-            return Ok(());
-        }
-    };
+    let (stream, first_msg) = first_msg(&mut stream).await?;
     let mut client = Client::new(true, state.clone(), stream).await?;
     // add client to state here
     loop {

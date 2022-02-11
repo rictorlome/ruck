@@ -6,13 +6,19 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Message {
-    HandshakeMessage(HandshakeMessage),
+    HandshakeMessage(HandshakePayload),
+    ErrorMessage(RuckError),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HandshakeMessage {
+pub struct HandshakePayload {
     pub id: Bytes,
     pub msg: Bytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RuckError {
+    InitiatedWithNonHandshake,
 }
 
 impl Message {
