@@ -13,7 +13,7 @@ pub async fn handshake(
     up: bool,
     password: Bytes,
     id: Bytes,
-) -> Result<(&mut MessageStream, Bytes)> {
+) -> Result<(&mut MessageStream, Aes256Gcm)> {
     let (s1, outbound_msg) =
         Spake2::<Ed25519Group>::start_symmetric(&Password::new(password), &Identity::new(&id));
     println!("client - sending handshake msg");
@@ -39,34 +39,33 @@ pub async fn handshake(
         Err(e) => return Err(anyhow!(e.to_string())),
     };
     println!("Handshake successful. Key is {:?}", key);
-    return Ok((stream, Bytes::from(key)));
+    return Ok((stream, new_cipher(&key)));
 }
 
-pub fn new_cypher(key: Bytes) -> Aes256Gcm {
+pub fn new_cipher(key: &Vec<u8>) -> Aes256Gcm {
     let key = Key::from_slice(&key[..]);
     Aes256Gcm::new(key)
 }
 
-const NONCE_SIZE_IN_BYTES: usize = 96 / 8;
-
-pub fn encrypt(cipher: &Aes256Gcm, body: Bytes) -> Result<EncryptedPayload> {
+pub const NONCE_SIZE_IN_BYTES: usize = 96 / 8;
+pub fn encrypt(cipher: &Aes256Gcm, body: &Vec<u8>) -> Result<EncryptedPayload> {
     let mut arr = [0u8; NONCE_SIZE_IN_BYTES];
     thread_rng().try_fill(&mut arr[..])?;
     let nonce = Nonce::from_slice(&arr);
     let plaintext = body.as_ref();
     match cipher.encrypt(nonce, plaintext) {
-        Ok(ciphertext) => Ok(EncryptedPayload {
-            nonce: Bytes::from(&arr[..]),
-            body: Bytes::from(ciphertext.as_ref()),
+        Ok(body) => Ok(EncryptedPayload {
+            nonce: arr.to_vec(),
+            body,
         }),
-        Err(_) => anyhow!("Encryption error"),
+        Err(_) => Err(anyhow!("Encryption error")),
     }
 }
 
-pub fn decrypt(cipher: &Aes256Gcm, payload: EncryptedPayload) -> Result<Bytes> {
+pub fn decrypt(cipher: &Aes256Gcm, payload: &EncryptedPayload) -> Result<Bytes> {
     let nonce = Nonce::from_slice(payload.nonce.as_ref());
     match cipher.decrypt(nonce, payload.body.as_ref()) {
-        Ok(_) => Ok(Bytes::from("hello")),
-        Err(_) => anyhow!("Decryption error"),
+        Ok(payload) => Ok(Bytes::from(payload)),
+        Err(_) => Err(anyhow!("Decryption error")),
     }
 }

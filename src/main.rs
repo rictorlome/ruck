@@ -5,6 +5,9 @@ mod file;
 mod message;
 mod server;
 
+#[cfg(test)]
+mod tests;
+
 use clap::Parser;
 use cli::{Cli, Commands};
 use client::{receive, send};

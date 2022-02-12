@@ -1,3 +1,9 @@
+use crate::crypto::{decrypt, encrypt};
+use crate::file::FileInfo;
+
+use aes_gcm::Aes256Gcm; // Or `Aes128Gcm`
+use anyhow::{anyhow, Result};
+use bincode::config;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -9,6 +15,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     HandshakeMessage(HandshakePayload),
+    EncryptedMessage(EncryptedPayload),
     ErrorMessage(RuckError),
 }
 
@@ -21,8 +28,43 @@ pub struct HandshakePayload {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedPayload {
-    pub nonce: Bytes,
-    pub body: Bytes,
+    pub nonce: Vec<u8>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EncryptedMessage {
+    FileNegotiationMessage(FileNegotiationPayload),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileNegotiationPayload {
+    pub files: Vec<FileInfo>,
+}
+
+impl EncryptedMessage {
+    pub fn from_encrypted_message(cipher: &Aes256Gcm, payload: &EncryptedPayload) -> Result<Self> {
+        let raw = decrypt(cipher, payload)?;
+        let res = match bincode::deserialize(raw.as_ref()) {
+            Ok(result) => result,
+            Err(e) => {
+                println!("deserialize error {:?}", e);
+                return Err(anyhow!("deser error"));
+            }
+        };
+        Ok(res)
+    }
+    pub fn to_encrypted_message(&self, cipher: &Aes256Gcm) -> Result<Message> {
+        let raw = match bincode::serialize(&self) {
+            Ok(result) => result,
+            Err(e) => {
+                println!("serialize error {:?}", e);
+                return Err(anyhow!("serialize error"));
+            }
+        };
+        let payload = encrypt(cipher, &raw)?;
+        Ok(Message::EncryptedMessage(payload))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

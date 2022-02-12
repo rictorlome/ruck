@@ -1,20 +1,19 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::ffi::OsString;
 use std::fs::Metadata;
 use std::path::PathBuf;
 use tokio::fs::File;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileInfo {
-    name: OsString,
-    size: u64,
+    pub path: PathBuf,
+    pub size: u64,
 }
 
 pub struct FileHandle {
-    file: File,
-    md: Metadata,
-    path: PathBuf,
+    pub file: File,
+    pub md: Metadata,
+    pub path: PathBuf,
 }
 
 impl FileHandle {
@@ -27,10 +26,7 @@ impl FileHandle {
 
     pub fn to_file_info(&self) -> FileInfo {
         FileInfo {
-            name: match self.path.file_name() {
-                Some(s) => s.to_os_string(),
-                None => OsString::from("Unknown"),
-            },
+            path: self.path.clone(),
             size: self.md.len(),
         }
     }
@@ -38,7 +34,8 @@ impl FileHandle {
 
 const SUFFIX: [&'static str; 9] = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
 // Stolen: https://gitlab.com/forkbomb9/human_bytes-rs/-/blob/master/src/lib.rs
-pub fn to_size_string(size: f64) -> String {
+pub fn to_size_string(size: u64) -> String {
+    let size = size as f64;
     let base = size.log10() / 1024_f64.log10();
     let mut result = format!("{:.1}", 1024_f64.powf(base - base.floor()),)
         .trim_end_matches(".0")

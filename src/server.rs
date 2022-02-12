@@ -156,9 +156,6 @@ pub async fn handle_connection(
             return Ok(());
         }
     };
-    // How do I get this handshake message to the peer
-    // If it's the sender, the recipient hasn't arrived yet
-    // If it's the recipient, the sender was created before
     println!("server - received msg from {:?}", addr);
     let mut client = Client::new(
         handshake_payload.up,
