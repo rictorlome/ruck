@@ -20,6 +20,12 @@ pub struct HandshakePayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncryptedPayload {
+    pub nonce: Bytes,
+    pub body: Bytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RuckError {
     NotHandshake,
     SenderNotConnected,

@@ -100,8 +100,7 @@ impl<'a> Client<'a> {
             true => {
                 let (tx, rx) = mpsc::unbounded_channel();
                 tx.send(msg)?;
-                let shared = &mut state.lock().await;
-                shared.handshakes.insert(self.id.clone(), rx);
+                state.lock().await.handshakes.insert(self.id.clone(), rx);
             }
             false => {
                 let shared = &mut state.lock().await;
@@ -109,6 +108,7 @@ impl<'a> Client<'a> {
                     tx.send(msg)?;
                 }
                 if let Some(mut rx) = shared.handshakes.remove(&self.id) {
+                    drop(shared);
                     if let Some(msg) = rx.recv().await {
                         self.messages.send(msg).await?;
                     }

@@ -1,9 +1,11 @@
 use crate::crypto::handshake;
+use crate::file::FileHandle;
 use crate::message::{Message, MessageStream};
 
 use anyhow::Result;
 use blake2::{Blake2s256, Digest};
 use bytes::{BufMut, Bytes, BytesMut};
+use futures::future::join_all;
 use futures::prelude::*;
 use std::path::PathBuf;
 use tokio::net::TcpStream;
@@ -16,6 +18,13 @@ fn pass_to_bytes(password: &String) -> Bytes {
 }
 
 pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
+    let tasks = file_paths
+        .into_iter()
+        .map(|path| FileHandle::new(path.to_path_buf()).map(|f| f.map(|s| s.to_file_info())));
+    let metadatas = join_all(tasks).await;
+    println!("mds: {:?}", metadatas);
+    return Ok(());
+
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
     let mut stream = Message::to_stream(socket);
 
@@ -27,21 +36,7 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
     )
     .await?;
 
-    return upload_encrypted_files(stream, file_paths, key).await;
-
-    // Send the value
-    // for path in paths.iter() {
-    //     let b = path.to_str().unwrap().as_bytes();
-    //     let mut buf = BytesMut::with_capacity(1024);
-    //     buf.put(&b[..]);
-    //     let body = buf.freeze();
-    //     let m = Message {
-    //         key: "abc".to_string(),
-    //         from_sender: true,
-    //         body: body,
-    //     };
-    //     stream.send(m).await.unwrap();
-    // }
+    // return upload_encrypted_files(stream, file_paths, key).await;
 }
 
 pub async fn receive(password: &String) -> Result<()> {
