@@ -1,8 +1,12 @@
 mod cli;
 mod client;
 mod crypto;
+mod file;
 mod message;
 mod server;
+
+#[cfg(test)]
+mod tests;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -16,7 +20,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match &args.command {
         Commands::Send { paths, password } => {
             println!("Sending {:?}", paths);
-            send(&paths, password).await?;
+            send(paths, password).await?;
         }
         Commands::Receive { password } => {
             println!("Receiving password {}", password);
