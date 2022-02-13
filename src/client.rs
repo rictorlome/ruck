@@ -1,6 +1,8 @@
 use crate::crypto::handshake;
 use crate::file::{to_size_string, FileHandle, FileInfo};
-use crate::message::{EncryptedMessage, FileNegotiationPayload, Message, MessageStream};
+use crate::message::{
+    EncryptedMessage, FileNegotiationPayload, FileTransferPayload, Message, MessageStream,
+};
 
 use aes_gcm::Aes256Gcm;
 use anyhow::{anyhow, Result};
@@ -8,9 +10,13 @@ use blake2::{Blake2s256, Digest};
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
 use futures::prelude::*;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use std::path::PathBuf;
-use tokio::io;
+use std::pin::Pin;
+use tokio::io::{self, AsyncReadExt};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 fn pass_to_bytes(password: &String) -> Bytes {
@@ -135,10 +141,55 @@ pub async fn negotiate_files_down(stream: &mut MessageStream, cipher: &Aes256Gcm
 
 pub async fn upload_encrypted_files(
     stream: &mut MessageStream,
-    file_paths: &Vec<PathBuf>,
-    key: Bytes,
+    handles: Vec<FileHandle>,
+    cipher: &Aes256Gcm,
 ) -> Result<()> {
-    return Ok(());
+    let (tx, mut rx) = mpsc::unbounded_channel::<EncryptedMessage>();
+    //turn foo into something more concrete
+    for mut handle in handles {
+        let txc = tx.clone();
+        tokio::spawn(async move {
+            let _ = enqueue_file_chunks(&mut handle, txc).await;
+        });
+    }
+
+    loop {
+        tokio::select! {
+            Some(msg) = rx.recv() => {
+                println!("message received to client.rx {:?}", msg);
+                let x = msg.to_encrypted_message(cipher)?;
+                stream.send(x).await?
+            }
+            else => break,
+        }
+    }
+    Ok(())
+}
+const BUFFER_SIZE: usize = 1024 * 64;
+pub async fn enqueue_file_chunks(
+    fh: &mut FileHandle,
+    tx: mpsc::UnboundedSender<EncryptedMessage>,
+) -> Result<()> {
+    // let mut buf = BytesMut::with_capacity(BUFFER_SIZE);
+
+    // // The `read` method is defined by this trait.
+    // let mut chunk_num = 0;
+    // while {
+    //     let n = fh.file.read(&mut buf[..]).await?;
+    //     n == 0
+    // } {
+    //     let chunk = buf.freeze();
+    //     let file_info = fh.to_file_info();
+    //     let ftp = EncryptedMessage::FileTransferMessage(FileTransferPayload {
+    //         chunk,
+    //         chunk_num,
+    //         file_info,
+    //     });
+    //     tx.send(ftp);
+    //     chunk_num += 1;
+    // }
+
+    Ok(())
 }
 
 pub async fn prompt_user_input(

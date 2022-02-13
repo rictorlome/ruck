@@ -35,11 +35,19 @@ pub struct EncryptedPayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EncryptedMessage {
     FileNegotiationMessage(FileNegotiationPayload),
+    FileTransferMessage(FileTransferPayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileNegotiationPayload {
     pub files: Vec<FileInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileTransferPayload {
+    pub file_info: FileInfo,
+    pub chunk_num: u64,
+    pub chunk: Bytes,
 }
 
 impl EncryptedMessage {

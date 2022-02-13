@@ -15,3 +15,9 @@
 
 - https://github.com/rust-lang/flate2-rs
 - https://crates.io/crates/async-compression
+
+
+- https://pdos.csail.mit.edu/papers/chord:sigcomm01/chord_sigcomm.pdf
+- https://pdos.csail.mit.edu/6.824/schedule.html
+- https://flylib.com/books/en/2.292.1.105/1/
+- https://en.wikipedia.org/wiki/Two_Generals%27_Problem
