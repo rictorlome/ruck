@@ -10,7 +10,6 @@ use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 pub async fn handshake(
     stream: &mut MessageStream,
-    up: bool,
     password: Bytes,
     id: Bytes,
 ) -> Result<(&mut MessageStream, Aes256Gcm)> {
@@ -18,7 +17,6 @@ pub async fn handshake(
         Spake2::<Ed25519Group>::start_symmetric(&Password::new(password), &Identity::new(&id));
     println!("client - sending handshake msg");
     let handshake_msg = Message::HandshakeMessage(HandshakePayload {
-        up,
         id,
         msg: Bytes::from(outbound_msg),
     });

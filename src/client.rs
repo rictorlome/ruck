@@ -37,7 +37,6 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
     // Complete handshake, returning cipher used for encryption
     let (stream, cipher) = handshake(
         &mut stream,
-        true,
         Bytes::from(password.to_string()),
         pass_to_bytes(password),
     )
@@ -57,7 +56,6 @@ pub async fn receive(password: &String) -> Result<()> {
     let mut stream = Message::to_stream(socket);
     let (stream, cipher) = handshake(
         &mut stream,
-        false,
         Bytes::from(password.to_string()),
         pass_to_bytes(password),
     )

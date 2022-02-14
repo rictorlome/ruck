@@ -21,7 +21,6 @@ pub enum Message {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandshakePayload {
-    pub up: bool,
     pub id: Bytes,
     pub msg: Bytes,
 }
