@@ -124,7 +124,6 @@ pub async fn handle_connection(
     println!("server - received msg from {:?}", addr);
     let client = Client::new(handshake_payload.id.clone(), state.clone(), stream).await?;
     let mut client = Client::upgrade(client, state.clone(), handshake_payload).await?;
-    // add client to state here
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {
@@ -142,6 +141,5 @@ pub async fn handle_connection(
             }
         }
     }
-    // client is disconnected, let's remove them from the state
     Ok(())
 }
