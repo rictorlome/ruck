@@ -167,7 +167,10 @@ pub async fn upload_encrypted_files(
                 let x = msg.to_encrypted_message(cipher)?;
                 stream.send(x).await?
             }
-            else => break,
+            else => {
+                println!("breaking");
+                break
+            },
         }
     }
     Ok(())
@@ -178,21 +181,22 @@ pub async fn enqueue_file_chunks(
     tx: mpsc::UnboundedSender<EncryptedMessage>,
 ) -> Result<()> {
     let mut chunk_num = 0;
-    let mut buf: BytesMut;
-    while {
-        buf = BytesMut::with_capacity(BUFFER_SIZE);
-        let n = fh.file.read_exact(&mut buf[..]).await?;
-        n == 0
-    } {
-        let chunk = buf.freeze();
-        let file_info = fh.to_file_info();
-        let ftp = EncryptedMessage::FileTransferMessage(FileTransferPayload {
-            chunk,
-            chunk_num,
-            file_info,
-        });
-        tx.send(ftp)?;
-        chunk_num += 1;
+    let mut bytes_read = 1;
+    while bytes_read != 0 {
+        let mut buf = BytesMut::with_capacity(BUFFER_SIZE);
+        bytes_read = fh.file.read_buf(&mut buf).await?;
+        println!("Bytes_read: {:?}, The bytes: {:?}", bytes_read, &buf[..]);
+        if bytes_read != 0 {
+            let chunk = buf.freeze();
+            let file_info = fh.to_file_info();
+            let ftp = EncryptedMessage::FileTransferMessage(FileTransferPayload {
+                chunk,
+                chunk_num,
+                file_info,
+            });
+            tx.send(ftp)?;
+            chunk_num += 1;
+        }
     }
 
     Ok(())
@@ -204,23 +208,24 @@ pub async fn download_files(
     cipher: &Aes256Gcm,
 ) -> Result<()> {
     // for each file_info
-    let info_handles: HashMap<_, _> = file_infos
-        .into_iter()
-        .map(|fi| {
-            let (tx, rx) = mpsc::unbounded_channel::<(u64, Bytes)>();
-            let path = fi.path.clone();
-            tokio::spawn(async move { download_file(fi, rx).await });
-            (path, tx)
-        })
-        .collect();
+    let mut info_handles: HashMap<PathBuf, mpsc::UnboundedSender<(u64, Bytes)>> = HashMap::new();
+    for fi in file_infos {
+        let (tx, rx) = mpsc::unbounded_channel::<(u64, Bytes)>();
+        let path = fi.path.clone();
+        tokio::spawn(async move { download_file(fi, rx).await });
+        info_handles.insert(path, tx);
+    }
     loop {
         tokio::select! {
             result = stream.next() => match result {
                 Some(Ok(Message::EncryptedMessage(payload))) => {
                     let ec = EncryptedMessage::from_encrypted_message(cipher, &payload)?;
+                    println!("encrypted message received! {:?}", ec);
                     match ec {
                         EncryptedMessage::FileTransferMessage(payload) => {
+                            println!("matched file transfer message");
                             if let Some(tx) = info_handles.get(&payload.file_info.path) {
+                                println!("matched on filetype, sending to tx");
                                 tx.send((payload.chunk_num, payload.chunk))?
                             };
                         },
@@ -244,15 +249,26 @@ pub async fn download_file(
     file_info: FileInfo,
     rx: mpsc::UnboundedReceiver<(u64, Bytes)>,
 ) -> Result<()> {
+    println!("in download file");
     let mut rx = rx;
     let filename = match file_info.path.file_name() {
-        Some(f) => f,
-        None => OsStr::new("random.txt"),
+        Some(f) => {
+            println!("matched filename");
+            f
+        }
+        None => {
+            println!("didnt match filename");
+            OsStr::new("random.txt")
+        }
     };
-    let mut file = File::open(filename).await?;
+    println!("trying to create file...filename={:?}", filename);
+    let mut file = File::create(filename).await?;
+    println!("file created ok! filename={:?}", filename);
     while let Some((chunk_num, chunk)) = rx.recv().await {
+        println!("rx got message! chunk={:?}", chunk);
         file.write_all(&chunk).await?;
     }
+    println!("done receiving messages");
     Ok(())
 }
 
