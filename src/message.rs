@@ -3,7 +3,6 @@ use crate::file::FileInfo;
 
 use aes_gcm::Aes256Gcm; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
-use bincode::config;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::error::Error;

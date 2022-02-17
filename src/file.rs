@@ -1,6 +1,4 @@
-use crate::message::FileTransferPayload;
-
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs::Metadata;
 use std::path::PathBuf;

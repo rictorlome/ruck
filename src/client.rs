@@ -1,3 +1,4 @@
+use crate::conf::BUFFER_SIZE;
 use crate::crypto::handshake;
 use crate::file::{to_size_string, FileHandle, FileInfo};
 use crate::message::{
@@ -10,8 +11,6 @@ use blake2::{Blake2s256, Digest};
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
 use futures::prelude::*;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -112,7 +111,7 @@ pub async fn negotiate_files_up(
 pub async fn negotiate_files_down(
     stream: &mut MessageStream,
     cipher: &Aes256Gcm,
-) -> Result<(Vec<FileInfo>)> {
+) -> Result<Vec<FileInfo>> {
     let file_offer = match stream.next().await {
         Some(Ok(msg)) => match msg {
             Message::EncryptedMessage(response) => response,
@@ -163,7 +162,7 @@ pub async fn upload_encrypted_files(
     loop {
         tokio::select! {
             Some(msg) = rx.recv() => {
-                println!("message received to client.rx {:?}", msg);
+                // println!("message received to client.rx {:?}", msg);
                 let x = msg.to_encrypted_message(cipher)?;
                 stream.send(x).await?
             }
@@ -175,7 +174,7 @@ pub async fn upload_encrypted_files(
     }
     Ok(())
 }
-const BUFFER_SIZE: usize = 1024 * 64;
+
 pub async fn enqueue_file_chunks(
     fh: &mut FileHandle,
     tx: mpsc::UnboundedSender<EncryptedMessage>,
@@ -185,7 +184,7 @@ pub async fn enqueue_file_chunks(
     while bytes_read != 0 {
         let mut buf = BytesMut::with_capacity(BUFFER_SIZE);
         bytes_read = fh.file.read_buf(&mut buf).await?;
-        println!("Bytes_read: {:?}, The bytes: {:?}", bytes_read, &buf[..]);
+        // println!("Bytes_read: {:?}, The bytes: {:?}", bytes_read, &buf[..]);
         if bytes_read != 0 {
             let chunk = buf.freeze();
             let file_info = fh.to_file_info();
@@ -220,7 +219,7 @@ pub async fn download_files(
             result = stream.next() => match result {
                 Some(Ok(Message::EncryptedMessage(payload))) => {
                     let ec = EncryptedMessage::from_encrypted_message(cipher, &payload)?;
-                    println!("encrypted message received! {:?}", ec);
+                    // println!("encrypted message received! {:?}", ec);
                     match ec {
                         EncryptedMessage::FileTransferMessage(payload) => {
                             println!("matched file transfer message");
@@ -264,8 +263,8 @@ pub async fn download_file(
     println!("trying to create file...filename={:?}", filename);
     let mut file = File::create(filename).await?;
     println!("file created ok! filename={:?}", filename);
-    while let Some((chunk_num, chunk)) = rx.recv().await {
-        println!("rx got message! chunk={:?}", chunk);
+    while let Some((_chunk_num, chunk)) = rx.recv().await {
+        // println!("rx got message! chunk={:?}", chunk);
         file.write_all(&chunk).await?;
     }
     println!("done receiving messages");
