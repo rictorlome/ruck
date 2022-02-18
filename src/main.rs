@@ -1,12 +1,10 @@
 mod cli;
 mod client;
+mod conf;
 mod crypto;
 mod file;
 mod message;
 mod server;
-
-#[cfg(test)]
-mod tests;
 
 use clap::Parser;
 use cli::{Cli, Commands};

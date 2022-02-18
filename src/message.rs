@@ -3,7 +3,6 @@ use crate::file::FileInfo;
 
 use aes_gcm::Aes256Gcm; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
-use bincode::config;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -21,7 +20,6 @@ pub enum Message {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandshakePayload {
-    pub up: bool,
     pub id: Bytes,
     pub msg: Bytes,
 }
@@ -35,11 +33,19 @@ pub struct EncryptedPayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EncryptedMessage {
     FileNegotiationMessage(FileNegotiationPayload),
+    FileTransferMessage(FileTransferPayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileNegotiationPayload {
     pub files: Vec<FileInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileTransferPayload {
+    pub file_info: FileInfo,
+    pub chunk_num: u64,
+    pub chunk: Bytes,
 }
 
 impl EncryptedMessage {

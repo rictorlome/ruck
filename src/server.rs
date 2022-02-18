@@ -7,115 +7,85 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, Mutex};
 
 type Tx = mpsc::UnboundedSender<Message>;
 type Rx = mpsc::UnboundedReceiver<Message>;
 
 pub struct Shared {
-    handshakes: HashMap<Bytes, Rx>,
-    senders: HashMap<Bytes, Tx>,
-    receivers: HashMap<Bytes, Tx>,
+    handshake_cache: HashMap<Bytes, Tx>,
 }
 type State = Arc<Mutex<Shared>>;
 
-struct Client<'a> {
-    up: bool,
-    id: Bytes,
-    messages: &'a mut MessageStream,
+struct Client {
+    messages: MessageStream,
     rx: Rx,
+    peer_tx: Option<Tx>,
+}
+struct StapledClient {
+    messages: MessageStream,
+    rx: Rx,
+    peer_tx: Tx,
 }
 
 impl Shared {
     fn new() -> Self {
         Shared {
-            handshakes: HashMap::new(),
-            senders: HashMap::new(),
-            receivers: HashMap::new(),
+            handshake_cache: HashMap::new(),
         }
-    }
-    async fn relay<'a>(&self, client: &Client<'a>, message: Message) -> Result<()> {
-        println!("in relay - got client={:?}, msg {:?}", client.id, message);
-        match client.up {
-            true => match self.receivers.get(&client.id) {
-                Some(tx) => {
-                    tx.send(message)?;
-                }
-                None => {
-                    return Err(anyhow!(RuckError::PairDisconnected));
-                }
-            },
-            false => match self.senders.get(&client.id) {
-                Some(tx) => {
-                    tx.send(message)?;
-                }
-                None => {
-                    return Err(anyhow!(RuckError::PairDisconnected));
-                }
-            },
-        }
-        Ok(())
     }
 }
 
-impl<'a> Client<'a> {
-    async fn new(
-        up: bool,
-        id: Bytes,
-        state: State,
-        messages: &'a mut MessageStream,
-    ) -> Result<Client<'a>> {
+impl Client {
+    async fn new(id: Bytes, state: State, messages: MessageStream) -> Result<Client> {
         let (tx, rx) = mpsc::unbounded_channel();
-        println!("server - creating client up={:?}, id={:?}", up, id);
-        let shared = &mut state.lock().await;
-        match shared.senders.get(&id) {
-            Some(_) if up => {
-                messages
-                    .send(Message::ErrorMessage(RuckError::SenderAlreadyConnected))
-                    .await?;
-            }
-            Some(_) => {
-                println!("server - adding client to receivers");
-                shared.receivers.insert(id.clone(), tx);
-            }
-            None if up => {
-                println!("server - adding client to senders");
-                shared.senders.insert(id.clone(), tx);
-            }
-            None => {
-                messages
-                    .send(Message::ErrorMessage(RuckError::SenderNotConnected))
-                    .await?;
-            }
-        }
-        Ok(Client {
-            up,
-            id,
+        let mut shared = state.lock().await;
+        let client = Client {
             messages,
             rx,
-        })
+            peer_tx: shared.handshake_cache.remove(&id),
+        };
+        shared.handshake_cache.insert(id, tx);
+        Ok(client)
     }
-    async fn complete_handshake(&mut self, state: State, msg: Message) -> Result<()> {
-        match self.up {
-            true => {
-                let (tx, rx) = mpsc::unbounded_channel();
-                tx.send(msg)?;
-                state.lock().await.handshakes.insert(self.id.clone(), rx);
-            }
-            false => {
-                let shared = &mut state.lock().await;
-                if let Some(tx) = shared.senders.get(&self.id) {
-                    tx.send(msg)?;
-                }
-                if let Some(mut rx) = shared.handshakes.remove(&self.id) {
-                    drop(shared);
-                    if let Some(msg) = rx.recv().await {
-                        self.messages.send(msg).await?;
+
+    async fn upgrade(
+        client: Client,
+        state: State,
+        handshake_payload: HandshakePayload,
+    ) -> Result<StapledClient> {
+        let mut client = client;
+        let peer_tx = match client.peer_tx {
+            // Receiver - already stapled at creation
+            Some(peer_tx) => peer_tx,
+            // Sender - needs to wait for the incoming msg to look up peer_tx
+            None => {
+                tokio::select! {
+                    Some(msg) = client.rx.recv() => {
+                        client.messages.send(msg).await?
+                    }
+                    result = client.messages.next() => match result {
+                        Some(_) => return Err(anyhow!("Client sending more messages before handshake complete")),
+                        None => return Err(anyhow!("Connection interrupted")),
                     }
                 }
+                match state
+                    .lock()
+                    .await
+                    .handshake_cache
+                    .remove(&handshake_payload.id)
+                {
+                    Some(peer_tx) => peer_tx,
+                    None => return Err(anyhow!("Connection not stapled")),
+                }
             }
-        }
-        Ok(())
+        };
+        peer_tx.send(Message::HandshakeMessage(handshake_payload))?;
+        Ok(StapledClient {
+            messages: client.messages,
+            rx: client.rx,
+            peer_tx,
+        })
     }
 }
 
@@ -156,29 +126,25 @@ pub async fn handle_connection(
             return Ok(());
         }
     };
-    println!("server - received msg from {:?}", addr);
-    let mut client = Client::new(
-        handshake_payload.up,
-        handshake_payload.id.clone(),
-        state.clone(),
-        &mut stream,
-    )
-    .await?;
-    client
-        .complete_handshake(state.clone(), Message::HandshakeMessage(handshake_payload))
-        .await?;
-    // add client to state here
+    let id = handshake_payload.id.clone();
+    let client = Client::new(id.clone(), state.clone(), stream).await?;
+    let mut client = match Client::upgrade(client, state.clone(), handshake_payload).await {
+        Ok(client) => client,
+        Err(err) => {
+            // Clear handshake cache if staple is unsuccessful
+            state.lock().await.handshake_cache.remove(&id);
+            return Err(err);
+        }
+    };
+    // The handshake cache should be empty for {id} at this point.
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {
-                println!("message received to client.rx {:?}", msg);
                 client.messages.send(msg).await?
             }
             result = client.messages.next() => match result {
                 Some(Ok(msg)) => {
-                    println!("GOT: {:?}", msg);
-                    let state = state.lock().await;
-                    state.relay(&client, msg).await?;
+                    client.peer_tx.send(msg)?
                 }
                 Some(Err(e)) => {
                     println!("Error {:?}", e);
@@ -187,6 +153,5 @@ pub async fn handle_connection(
             }
         }
     }
-    // client is disconnected, let's remove them from the state
     Ok(())
 }
