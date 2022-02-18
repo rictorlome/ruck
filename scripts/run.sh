@@ -1,1 +1,1 @@
-$ docker run -p 8080:3030 --rm --name ruck1 ruck
+docker run -p 8080:3030 --rm --name ruck1 ruck

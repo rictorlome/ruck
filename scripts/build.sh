@@ -1,1 +1,1 @@
-docker build -t ruck ..
+docker build -t ruck .

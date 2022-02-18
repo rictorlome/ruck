@@ -22,7 +22,7 @@ RUN cargo build --release
 # Copy the binary into a new container for a smaller docker image
 FROM debian:buster-slim
 
-COPY --from=build ./target/release/ruck /
+COPY --from=build /ruck/target/release/ruck /
 USER root
 
 ENV RUST_LOG=info
