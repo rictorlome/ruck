@@ -1,48 +1,46 @@
-use crate::message::{EncryptedPayload, HandshakePayload, Message, MessageStream};
+use crate::message::EncryptedPayload;
 
 use aes_gcm::aead::{Aead, NewAead};
 use aes_gcm::{Aes256Gcm, Key, Nonce}; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use rand::{thread_rng, Rng};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 pub async fn handshake(
-    stream: &mut MessageStream,
+    socket: TcpStream,
     password: Bytes,
     id: Bytes,
-) -> Result<(&mut MessageStream, Aes256Gcm)> {
+) -> Result<(TcpStream, Aes256Gcm)> {
+    let mut socket = socket;
     let (s1, outbound_msg) =
         Spake2::<Ed25519Group>::start_symmetric(&Password::new(password), &Identity::new(&id));
     println!("client - sending handshake msg");
-    let handshake_msg = Message::HandshakeMessage(HandshakePayload {
-        id: id.clone(),
-        msg: Bytes::from(outbound_msg.clone()),
-    });
+    let mut handshake_msg = BytesMut::with_capacity(32 + 33);
+    handshake_msg.extend_from_slice(&id);
+    handshake_msg.extend_from_slice(&outbound_msg);
+    let handshake_msg = handshake_msg.freeze();
     println!("client - handshake msg, {:?}", handshake_msg);
-    println!(
-        "len id: {:?}. len msg: {:?}",
-        id.len(),
-        Bytes::from(outbound_msg).len()
-    );
-    stream.send(handshake_msg).await?;
-    let first_message = match stream.next().await {
-        Some(Ok(msg)) => match msg {
-            Message::HandshakeMessage(response) => response.msg,
-            _ => return Err(anyhow!("Expecting handshake message response")),
-        },
-        _ => {
-            return Err(anyhow!("No response to handshake message"));
-        }
-    };
-    println!("client - handshake msg responded to");
+    // println!(
+    //     "len id: {:?}. len msg: {:?}",
+    //     id.len(),
+    //     Bytes::from(outbound_msg).len()
+    // );
+    socket.write_all(&handshake_msg).await?;
+    let mut buffer = [0; 33];
+    let n = socket.read_exact(&mut buffer).await?;
+    println!("The bytes: {:?}", &buffer[..n]);
+    let first_message = BytesMut::from(&buffer[..n]).freeze();
+    println!("client - handshake msg responded to: {:?}", first_message);
     let key = match s1.finish(&first_message[..]) {
         Ok(key_bytes) => key_bytes,
         Err(e) => return Err(anyhow!(e.to_string())),
     };
     // println!("Handshake successful. Key is {:?}", key);
-    return Ok((stream, new_cipher(&key)));
+    return Ok((socket, new_cipher(&key)));
 }
 
 pub fn new_cipher(key: &Vec<u8>) -> Aes256Gcm {

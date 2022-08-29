@@ -33,21 +33,20 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
 
     // Establish connection to server
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
-    let mut stream = Message::to_stream(socket);
 
     // Complete handshake, returning cipher used for encryption
-    let (stream, cipher) = handshake(
-        &mut stream,
+    let (socket, cipher) = handshake(
+        socket,
         Bytes::from(password.to_string()),
         pass_to_bytes(password),
     )
     .await?;
-
+    let mut stream = Message::to_stream(socket);
     // Complete file negotiation
-    let handles = negotiate_files_up(handles, stream, &cipher).await?;
+    let handles = negotiate_files_up(handles, &mut stream, &cipher).await?;
 
     // Upload negotiated files
-    upload_encrypted_files(stream, handles, &cipher).await?;
+    upload_encrypted_files(&mut stream, handles, &cipher).await?;
 
     // Exit
     Ok(())
@@ -55,17 +54,16 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
 
 pub async fn receive(password: &String) -> Result<()> {
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
-    let mut stream = Message::to_stream(socket);
-    let (stream, cipher) = handshake(
-        &mut stream,
+    let (socket, cipher) = handshake(
+        socket,
         Bytes::from(password.to_string()),
         pass_to_bytes(password),
     )
     .await?;
+    let mut stream = Message::to_stream(socket);
+    let files = negotiate_files_down(&mut stream, &cipher).await?;
 
-    let files = negotiate_files_down(stream, &cipher).await?;
-
-    download_files(files, stream, &cipher).await?;
+    download_files(files, &mut stream, &cipher).await?;
     return Ok(());
 }
 

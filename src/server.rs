@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
+use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -61,7 +62,7 @@ impl Client {
             None => {
                 tokio::select! {
                     Some(msg) = client.rx.recv() => {
-                        client.socket.write_all(&msg).await?
+                        client.socket.write_all(&msg[..]).await?
                     }
                 }
                 match state.lock().await.handshake_cache.remove(&id) {
@@ -103,13 +104,15 @@ pub async fn handle_connection(
 ) -> Result<()> {
     socket.readable().await?;
     let mut socket = socket;
-    let mut id_buffer = BytesMut::with_capacity(32);
-    let mut msg_buffer = BytesMut::with_capacity(33);
-    socket.read_exact(&mut id_buffer).await?;
-    socket.read_exact(&mut msg_buffer).await?;
-    let id = id_buffer.freeze();
-    let msg = msg_buffer.freeze();
+    // let mut handshake_buffer = BytesMut::with_capacity(55);
+    let mut buffer = [0; 32 + 33];
+    let n = socket.read_exact(&mut buffer).await?;
+    println!("The bytes: {:?}", &buffer[..n]);
+    let mut msg = BytesMut::from(&buffer[..n]).freeze();
+    let id = msg.split_to(32);
+    println!("New client with id={:?}, msg={:?}", id.clone(), msg.clone());
     let client = Client::new(id.clone(), state.clone(), socket).await?;
+    println!("Client created");
     let mut client = match Client::upgrade(client, state.clone(), id.clone(), msg).await {
         Ok(client) => client,
         Err(err) => {
@@ -118,19 +121,21 @@ pub async fn handle_connection(
             return Err(err);
         }
     };
+    println!("Client upgraded");
     // The handshake cache should be empty for {id} at this point.
-    let mut channel_buffer = BytesMut::with_capacity(1024);
+    let mut client_buffer = BytesMut::with_capacity(1024);
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {
-                client.socket.write_all(&msg).await?
+                client.socket.write_all(&msg[..]).await?
             }
-            result = client.socket.read(&mut channel_buffer) => match result {
+            result = client.socket.read(&mut client_buffer) => match result {
                 Ok(0) => {
                     break
                 },
                 Ok(n) => {
-                    client.peer_tx.send(BytesMut::from(&channel_buffer[0..n]).freeze())?
+                    println!("reading more");
+                    client.peer_tx.send(BytesMut::from(&client_buffer[0..n]).freeze())?
                 },
                 Err(e) => {
                     println!("Error {:?}", e);
@@ -138,5 +143,6 @@ pub async fn handle_connection(
             }
         }
     }
+    println!("done with client");
     Ok(())
 }
