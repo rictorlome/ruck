@@ -17,10 +17,15 @@ pub async fn handshake(
         Spake2::<Ed25519Group>::start_symmetric(&Password::new(password), &Identity::new(&id));
     println!("client - sending handshake msg");
     let handshake_msg = Message::HandshakeMessage(HandshakePayload {
-        id,
-        msg: Bytes::from(outbound_msg),
+        id: id.clone(),
+        msg: Bytes::from(outbound_msg.clone()),
     });
-    // println!("client - handshake msg, {:?}", handshake_msg);
+    println!("client - handshake msg, {:?}", handshake_msg);
+    println!(
+        "len id: {:?}. len msg: {:?}",
+        id.len(),
+        Bytes::from(outbound_msg).len()
+    );
     stream.send(handshake_msg).await?;
     let first_message = match stream.next().await {
         Some(Ok(msg)) => match msg {
