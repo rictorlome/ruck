@@ -83,6 +83,7 @@ pub async fn negotiate_files_up(
     let files = file_handles.iter().map(|fh| fh.to_file_info()).collect();
     let msg = EncryptedMessage::FileNegotiationMessage(FileNegotiationPayload { files });
     let server_msg = msg.to_encrypted_message(cipher)?;
+    println!("server_msg encrypted: {:?}", server_msg);
     stream.send(server_msg).await?;
     let reply_payload = match stream.next().await {
         Some(Ok(msg)) => match msg {

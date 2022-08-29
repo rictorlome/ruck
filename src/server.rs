@@ -1,7 +1,7 @@
+use crate::conf::BUFFER_SIZE;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -123,19 +123,22 @@ pub async fn handle_connection(
     };
     println!("Client upgraded");
     // The handshake cache should be empty for {id} at this point.
-    let mut client_buffer = BytesMut::with_capacity(1024);
+    let mut client_buffer = BytesMut::with_capacity(BUFFER_SIZE);
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {
+                // println!("piping bytes= {:?}", msg);
                 client.socket.write_all(&msg[..]).await?
             }
-            result = client.socket.read(&mut client_buffer) => match result {
+            result = client.socket.read_buf(&mut client_buffer) => match result {
                 Ok(0) => {
-                    break
+                    break;
                 },
                 Ok(n) => {
-                    println!("reading more");
-                    client.peer_tx.send(BytesMut::from(&client_buffer[0..n]).freeze())?
+                    let b = BytesMut::from(&client_buffer[0..n]).freeze();
+                    // println!("reading more = {:?}", b);
+                    client_buffer.clear();
+                    client.peer_tx.send(b)?
                 },
                 Err(e) => {
                     println!("Error {:?}", e);

@@ -4,7 +4,6 @@ use aes_gcm::aead::{Aead, NewAead};
 use aes_gcm::{Aes256Gcm, Key, Nonce}; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
-use futures::prelude::*;
 use rand::{thread_rng, Rng};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -24,11 +23,7 @@ pub async fn handshake(
     handshake_msg.extend_from_slice(&outbound_msg);
     let handshake_msg = handshake_msg.freeze();
     println!("client - handshake msg, {:?}", handshake_msg);
-    // println!(
-    //     "len id: {:?}. len msg: {:?}",
-    //     id.len(),
-    //     Bytes::from(outbound_msg).len()
-    // );
+    println!("id: {:?}. msg: {:?}", id.clone(), outbound_msg.clone());
     socket.write_all(&handshake_msg).await?;
     let mut buffer = [0; 33];
     let n = socket.read_exact(&mut buffer).await?;
@@ -39,7 +34,7 @@ pub async fn handshake(
         Ok(key_bytes) => key_bytes,
         Err(e) => return Err(anyhow!(e.to_string())),
     };
-    // println!("Handshake successful. Key is {:?}", key);
+    println!("Handshake successful. Key is {:?}", key);
     return Ok((socket, new_cipher(&key)));
 }
 
