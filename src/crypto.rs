@@ -8,6 +8,7 @@ use rand::{thread_rng, Rng};
 
 pub struct Crypt {
     cipher: Aes256Gcm,
+    arr: [u8; NONCE_SIZE_IN_BYTES],
 }
 
 impl Crypt {
@@ -15,13 +16,14 @@ impl Crypt {
         let key = Key::from_slice(&key[..]);
         Crypt {
             cipher: Aes256Gcm::new(key),
+            arr: [0u8; NONCE_SIZE_IN_BYTES],
         }
     }
 
-    pub fn encrypt(&self, plaintext: Bytes) -> Result<Bytes> {
-        let mut arr = [0u8; NONCE_SIZE_IN_BYTES];
-        thread_rng().try_fill(&mut arr[..])?;
-        let nonce = Nonce::from_slice(&arr);
+    // Returns wire format, includes nonce as prefix
+    pub fn encrypt(&mut self, plaintext: Bytes) -> Result<Bytes> {
+        thread_rng().try_fill(&mut self.arr[..])?;
+        let nonce = Nonce::from_slice(&self.arr);
         match self.cipher.encrypt(nonce, plaintext.as_ref()) {
             Ok(body) => {
                 let mut buffer = BytesMut::with_capacity(NONCE_SIZE_IN_BYTES + body.len());
@@ -33,11 +35,12 @@ impl Crypt {
         }
     }
 
-    pub fn decrypt(&self, body: Bytes) -> Result<Bytes> {
-        let mut body = body;
-        let nonce_bytes = body.split_to(NONCE_SIZE_IN_BYTES);
+    // Accepts wire format, includes nonce as prefix
+    pub fn decrypt(&self, ciphertext: Bytes) -> Result<Bytes> {
+        let mut ciphertext_body = ciphertext;
+        let nonce_bytes = ciphertext_body.split_to(NONCE_SIZE_IN_BYTES);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        match self.cipher.decrypt(nonce, body.as_ref()) {
+        match self.cipher.decrypt(nonce, ciphertext_body.as_ref()) {
             Ok(payload) => Ok(Bytes::from(payload)),
             Err(e) => Err(anyhow!(e.to_string())),
         }

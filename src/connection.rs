@@ -1,6 +1,7 @@
 use crate::crypto::Crypt;
 use crate::message::{Message, MessageStream};
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 
@@ -15,13 +16,18 @@ impl Connection {
         let crypt = Crypt::new(&key);
         Connection { ms, crypt }
     }
-    pub async fn send_msg(&mut self, msg: Message) -> Result<()> {
-        let msg = msg.serialize()?;
-        let bytes = self.crypt.encrypt(msg)?;
+
+    async fn send_bytes(&mut self, bytes: Bytes) -> Result<()> {
         match self.ms.send(bytes).await {
             Ok(_) => Ok(()),
             Err(e) => Err(anyhow!(e.to_string())),
         }
+    }
+
+    pub async fn send_msg(&mut self, msg: Message) -> Result<()> {
+        let msg = msg.serialize()?;
+        let bytes = self.crypt.encrypt(msg)?;
+        self.send_bytes(bytes).await
     }
 
     pub async fn await_msg(&mut self) -> Result<Message> {
@@ -30,9 +36,8 @@ impl Connection {
                 let decrypted_bytes = self.crypt.decrypt(msg.freeze())?;
                 Message::deserialize(decrypted_bytes)
             }
-            _ => {
-                return Err(anyhow!("No response to negotiation message"));
-            }
+            Some(Err(e)) => Err(anyhow!(e.to_string())),
+            None => Err(anyhow!("Error awaiting msg")),
         }
     }
 }
