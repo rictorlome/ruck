@@ -1,4 +1,5 @@
 use crate::conf::BUFFER_SIZE;
+use crate::handshake::Handshake;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
@@ -48,12 +49,7 @@ impl Client {
         Ok(client)
     }
 
-    async fn upgrade(
-        client: Client,
-        state: State,
-        id: Bytes,
-        handshake_msg: Bytes,
-    ) -> Result<StapledClient> {
+    async fn upgrade(client: Client, state: State, handshake: Handshake) -> Result<StapledClient> {
         let mut client = client;
         let peer_tx = match client.peer_tx {
             // Receiver - already stapled at creation
@@ -65,13 +61,13 @@ impl Client {
                         client.socket.write_all(&msg[..]).await?
                     }
                 }
-                match state.lock().await.handshake_cache.remove(&id) {
+                match state.lock().await.handshake_cache.remove(&handshake.id) {
                     Some(peer_tx) => peer_tx,
                     None => return Err(anyhow!("Connection not stapled")),
                 }
             }
         };
-        peer_tx.send(handshake_msg)?;
+        peer_tx.send(handshake.outbound_msg)?;
         Ok(StapledClient {
             socket: client.socket,
             rx: client.rx,
@@ -103,17 +99,11 @@ pub async fn handle_connection(
     _addr: SocketAddr,
 ) -> Result<()> {
     socket.readable().await?;
-    let mut socket = socket;
-    // let mut handshake_buffer = BytesMut::with_capacity(55);
-    let mut buffer = [0; 32 + 33];
-    let n = socket.read_exact(&mut buffer).await?;
-    println!("The bytes: {:?}", &buffer[..n]);
-    let mut msg = BytesMut::from(&buffer[..n]).freeze();
-    let id = msg.split_to(32);
-    println!("New client with id={:?}, msg={:?}", id.clone(), msg.clone());
+    let (handshake, socket) = Handshake::from_socket(socket).await?;
+    let id = handshake.id.clone();
     let client = Client::new(id.clone(), state.clone(), socket).await?;
     println!("Client created");
-    let mut client = match Client::upgrade(client, state.clone(), id.clone(), msg).await {
+    let mut client = match Client::upgrade(client, state.clone(), handshake).await {
         Ok(client) => client,
         Err(err) => {
             // Clear handshake cache if staple is unsuccessful

@@ -1,13 +1,12 @@
 use crate::conf::BUFFER_SIZE;
-use crate::crypto::handshake;
 use crate::file::{to_size_string, FileHandle, FileInfo};
+use crate::handshake::Handshake;
 use crate::message::{
     EncryptedMessage, FileNegotiationPayload, FileTransferPayload, Message, MessageStream,
 };
 
 use aes_gcm::Aes256Gcm;
 use anyhow::{anyhow, Result};
-use blake2::{Blake2s256, Digest};
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
 use futures::prelude::*;
@@ -20,13 +19,6 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
-fn pass_to_bytes(password: &String) -> Bytes {
-    let mut hasher = Blake2s256::new();
-    hasher.update(password.as_bytes());
-    let res = hasher.finalize();
-    BytesMut::from(&res[..]).freeze()
-}
-
 pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
     // Fail early if there are problems generating file handles
     let handles = get_file_handles(file_paths).await?;
@@ -35,12 +27,9 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
 
     // Complete handshake, returning cipher used for encryption
-    let (socket, cipher) = handshake(
-        socket,
-        Bytes::from(password.to_string()),
-        pass_to_bytes(password),
-    )
-    .await?;
+    let (handshake, s1) = Handshake::from_password(password);
+    let (socket, cipher) = handshake.negotiate(socket, s1).await?;
+
     let mut stream = Message::to_stream(socket);
     // Complete file negotiation
     let handles = negotiate_files_up(handles, &mut stream, &cipher).await?;
@@ -54,12 +43,8 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
 
 pub async fn receive(password: &String) -> Result<()> {
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
-    let (socket, cipher) = handshake(
-        socket,
-        Bytes::from(password.to_string()),
-        pass_to_bytes(password),
-    )
-    .await?;
+    let (handshake, s1) = Handshake::from_password(password);
+    let (socket, cipher) = handshake.negotiate(socket, s1).await?;
     let mut stream = Message::to_stream(socket);
     let files = negotiate_files_down(&mut stream, &cipher).await?;
 

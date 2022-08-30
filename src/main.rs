@@ -3,6 +3,7 @@ mod client;
 mod conf;
 mod crypto;
 mod file;
+mod handshake;
 mod message;
 mod server;
 
