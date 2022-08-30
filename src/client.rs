@@ -1,11 +1,11 @@
 use crate::conf::BUFFER_SIZE;
+use crate::crypto::Crypt;
 use crate::file::{to_size_string, FileHandle, FileInfo};
 use crate::handshake::Handshake;
 use crate::message::{
     EncryptedMessage, FileNegotiationPayload, FileTransferPayload, Message, MessageStream,
 };
 
-use aes_gcm::Aes256Gcm;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future::try_join_all;
@@ -26,16 +26,18 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
     // Establish connection to server
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
 
-    // Complete handshake, returning cipher used for encryption
     let (handshake, s1) = Handshake::from_password(password);
-    let (socket, cipher) = handshake.negotiate(socket, s1).await?;
+    // Complete handshake, returning key used for encryption
+    let (socket, key) = handshake.negotiate(socket, s1).await?;
 
     let mut stream = Message::to_stream(socket);
+    let crypt = Crypt::new(&key);
     // Complete file negotiation
-    let handles = negotiate_files_up(handles, &mut stream, &cipher).await?;
+    let handles = negotiate_files_up(handles, &mut stream, &crypt).await?;
 
     // Upload negotiated files
-    upload_encrypted_files(&mut stream, handles, &cipher).await?;
+    upload_encrypted_files(&mut stream, handles, &crypt).await?;
+    println!("Done uploading.");
 
     // Exit
     Ok(())
@@ -44,11 +46,12 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
 pub async fn receive(password: &String) -> Result<()> {
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
     let (handshake, s1) = Handshake::from_password(password);
-    let (socket, cipher) = handshake.negotiate(socket, s1).await?;
+    let (socket, key) = handshake.negotiate(socket, s1).await?;
     let mut stream = Message::to_stream(socket);
-    let files = negotiate_files_down(&mut stream, &cipher).await?;
+    let crypt = Crypt::new(&key);
+    let files = negotiate_files_down(&mut stream, &crypt).await?;
 
-    download_files(files, &mut stream, &cipher).await?;
+    download_files(files, &mut stream, &crypt).await?;
     return Ok(());
 }
 
@@ -63,23 +66,22 @@ pub async fn get_file_handles(file_paths: &Vec<PathBuf>) -> Result<Vec<FileHandl
 pub async fn negotiate_files_up(
     file_handles: Vec<FileHandle>,
     stream: &mut MessageStream,
-    cipher: &Aes256Gcm,
+    crypt: &Crypt,
 ) -> Result<Vec<FileHandle>> {
     let files = file_handles.iter().map(|fh| fh.to_file_info()).collect();
     let msg = EncryptedMessage::FileNegotiationMessage(FileNegotiationPayload { files });
-    let server_msg = msg.to_encrypted_message(cipher)?;
+    let server_msg = msg.to_encrypted_message(crypt)?;
     println!("server_msg encrypted: {:?}", server_msg);
     stream.send(server_msg).await?;
     let reply_payload = match stream.next().await {
         Some(Ok(msg)) => match msg {
             Message::EncryptedMessage(response) => response,
-            _ => return Err(anyhow!("Expecting encrypted message back")),
         },
         _ => {
             return Err(anyhow!("No response to negotiation message"));
         }
     };
-    let plaintext_reply = EncryptedMessage::from_encrypted_message(cipher, &reply_payload)?;
+    let plaintext_reply = EncryptedMessage::from_encrypted_message(crypt, &reply_payload)?;
     let requested_paths: Vec<PathBuf> = match plaintext_reply {
         EncryptedMessage::FileNegotiationMessage(fnm) => {
             fnm.files.into_iter().map(|f| f.path).collect()
@@ -94,18 +96,17 @@ pub async fn negotiate_files_up(
 
 pub async fn negotiate_files_down(
     stream: &mut MessageStream,
-    cipher: &Aes256Gcm,
+    crypt: &Crypt,
 ) -> Result<Vec<FileInfo>> {
     let file_offer = match stream.next().await {
         Some(Ok(msg)) => match msg {
             Message::EncryptedMessage(response) => response,
-            _ => return Err(anyhow!("Expecting encrypted message back")),
         },
         _ => {
             return Err(anyhow!("No response to negotiation message"));
         }
     };
-    let plaintext_offer = EncryptedMessage::from_encrypted_message(cipher, &file_offer)?;
+    let plaintext_offer = EncryptedMessage::from_encrypted_message(crypt, &file_offer)?;
     let requested_infos: Vec<FileInfo> = match plaintext_offer {
         EncryptedMessage::FileNegotiationMessage(fnm) => fnm.files,
         _ => return Err(anyhow!("Expecting file negotiation message back")),
@@ -125,7 +126,7 @@ pub async fn negotiate_files_down(
     let msg = EncryptedMessage::FileNegotiationMessage(FileNegotiationPayload {
         files: files.clone(),
     });
-    let server_msg = msg.to_encrypted_message(cipher)?;
+    let server_msg = msg.to_encrypted_message(crypt)?;
     stream.send(server_msg).await?;
     Ok(files)
 }
@@ -133,7 +134,7 @@ pub async fn negotiate_files_down(
 pub async fn upload_encrypted_files(
     stream: &mut MessageStream,
     handles: Vec<FileHandle>,
-    cipher: &Aes256Gcm,
+    cipher: &Crypt,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<EncryptedMessage>();
     for mut handle in handles {
@@ -188,7 +189,7 @@ pub async fn enqueue_file_chunks(
 pub async fn download_files(
     file_infos: Vec<FileInfo>,
     stream: &mut MessageStream,
-    cipher: &Aes256Gcm,
+    cipher: &Crypt,
 ) -> Result<()> {
     // for each file_info
     let mut info_handles: HashMap<PathBuf, mpsc::UnboundedSender<(u64, Bytes)>> = HashMap::new();
@@ -206,17 +207,14 @@ pub async fn download_files(
                     // println!("encrypted message received! {:?}", ec);
                     match ec {
                         EncryptedMessage::FileTransferMessage(payload) => {
-                            println!("matched file transfer message");
+                            // println!("matched file transfer message");
                             if let Some(tx) = info_handles.get(&payload.file_info.path) {
-                                println!("matched on filetype, sending to tx");
+                                // println!("matched on filetype, sending to tx");
                                 tx.send((payload.chunk_num, payload.chunk))?
                             };
                         },
                         _ => {println!("wrong msg")}
                     }
-                }
-                Some(Ok(_)) => {
-                    println!("wrong msg");
                 }
                 Some(Err(e)) => {
                     println!("Error {:?}", e);

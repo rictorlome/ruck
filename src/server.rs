@@ -1,4 +1,4 @@
-use crate::conf::BUFFER_SIZE;
+use crate::conf::PER_CLIENT_BUFFER;
 use crate::handshake::Handshake;
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
@@ -113,7 +113,7 @@ pub async fn handle_connection(
     };
     println!("Client upgraded");
     // The handshake cache should be empty for {id} at this point.
-    let mut client_buffer = BytesMut::with_capacity(BUFFER_SIZE);
+    let mut client_buffer = BytesMut::with_capacity(PER_CLIENT_BUFFER);
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {

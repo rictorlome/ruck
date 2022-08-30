@@ -1,7 +1,5 @@
 use crate::conf::{HANDSHAKE_MSG_SIZE, ID_SIZE};
-use crate::crypto::new_cipher;
 
-use aes_gcm::Aes256Gcm; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
 use blake2::{Blake2s256, Digest};
 use bytes::{Bytes, BytesMut};
@@ -29,17 +27,12 @@ impl Handshake {
 
     pub async fn from_socket(socket: TcpStream) -> Result<(Handshake, TcpStream)> {
         let mut socket = socket;
-        let mut buffer = BytesMut::with_capacity(ID_SIZE + HANDSHAKE_MSG_SIZE);
-        match socket.read_exact(&mut buffer).await? {
-            65 => Ok((Handshake::from_buffer(buffer), socket)), // magic number to catch correct capacity
-            _ => return Err(anyhow!("invalid handshake buffer pulled from socket")),
-        }
-    }
-
-    pub fn from_buffer(buffer: BytesMut) -> Handshake {
-        let mut outbound_msg = BytesMut::from(&buffer[..ID_SIZE + HANDSHAKE_MSG_SIZE]).freeze();
-        let id = outbound_msg.split_to(32);
-        Handshake { id, outbound_msg }
+        let mut buffer = [0; ID_SIZE + HANDSHAKE_MSG_SIZE];
+        let n = socket.read_exact(&mut buffer).await?;
+        println!("The bytes: {:?}", &buffer[..n]);
+        let mut outbound_msg = BytesMut::from(&buffer[..n]).freeze();
+        let id = outbound_msg.split_to(ID_SIZE);
+        Ok((Handshake { id, outbound_msg }, socket))
     }
 
     pub fn to_bytes(self) -> Bytes {
@@ -53,10 +46,11 @@ impl Handshake {
         self,
         socket: TcpStream,
         s1: spake2::Spake2<spake2::Ed25519Group>,
-    ) -> Result<(TcpStream, Aes256Gcm)> {
+    ) -> Result<(TcpStream, Vec<u8>)> {
         let mut socket = socket;
-        // println!("client - sending handshake msg");
-        socket.write_all(&self.to_bytes()).await?;
+        let bytes = &self.to_bytes();
+        println!("client - sending handshake msg= {:?}", &bytes);
+        socket.write_all(&bytes).await?;
         let mut buffer = [0; HANDSHAKE_MSG_SIZE];
         let n = socket.read_exact(&mut buffer).await?;
         let response = BytesMut::from(&buffer[..n]).freeze();
@@ -66,7 +60,7 @@ impl Handshake {
             Err(e) => return Err(anyhow!(e.to_string())),
         };
         println!("Handshake successful. Key is {:?}", key);
-        return Ok((socket, new_cipher(&key)));
+        return Ok((socket, key));
     }
 
     fn pass_to_bytes(password: &String) -> Bytes {

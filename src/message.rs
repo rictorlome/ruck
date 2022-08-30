@@ -1,7 +1,6 @@
-use crate::crypto::{decrypt, encrypt};
+use crate::crypto::Crypt;
 use crate::file::FileInfo;
 
-use aes_gcm::Aes256Gcm; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -13,15 +12,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Message {
-    HandshakeMessage(HandshakePayload),
     EncryptedMessage(EncryptedPayload),
-    ErrorMessage(RuckError),
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HandshakePayload {
-    pub id: Bytes,
-    pub msg: Bytes,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,8 +40,8 @@ pub struct FileTransferPayload {
 }
 
 impl EncryptedMessage {
-    pub fn from_encrypted_message(cipher: &Aes256Gcm, payload: &EncryptedPayload) -> Result<Self> {
-        let raw = decrypt(cipher, payload)?;
+    pub fn from_encrypted_message(crypt: &Crypt, payload: &EncryptedPayload) -> Result<Self> {
+        let raw = crypt.decrypt(payload)?;
         let res = match bincode::deserialize(raw.as_ref()) {
             Ok(result) => result,
             Err(e) => {
@@ -60,7 +51,7 @@ impl EncryptedMessage {
         };
         Ok(res)
     }
-    pub fn to_encrypted_message(&self, cipher: &Aes256Gcm) -> Result<Message> {
+    pub fn to_encrypted_message(&self, crypt: &Crypt) -> Result<Message> {
         let raw = match bincode::serialize(&self) {
             Ok(result) => result,
             Err(e) => {
@@ -68,7 +59,7 @@ impl EncryptedMessage {
                 return Err(anyhow!("serialize error"));
             }
         };
-        let payload = encrypt(cipher, &raw)?;
+        let payload = crypt.encrypt(&raw)?;
         Ok(Message::EncryptedMessage(payload))
     }
 }
