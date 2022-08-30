@@ -57,7 +57,9 @@ impl Client {
             // Sender - needs to wait for the incoming msg to look up peer_tx
             None => {
                 tokio::select! {
+                    // Client reads handshake message sent over channel
                     Some(msg) = client.rx.recv() => {
+                        // Writes parnter handshake message over wire
                         client.socket.write_all(&msg[..]).await?
                     }
                 }
@@ -126,9 +128,8 @@ pub async fn handle_connection(
                 },
                 Ok(n) => {
                     let b = BytesMut::from(&client_buffer[0..n]).freeze();
-                    // println!("reading more = {:?}", b);
+                    client.peer_tx.send(b)?;
                     client_buffer.clear();
-                    client.peer_tx.send(b)?
                 },
                 Err(e) => {
                     println!("Error {:?}", e);

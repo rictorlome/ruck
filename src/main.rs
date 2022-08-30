@@ -1,6 +1,7 @@
 mod cli;
 mod client;
 mod conf;
+mod connection;
 mod crypto;
 mod file;
 mod handshake;
