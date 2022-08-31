@@ -1,13 +1,12 @@
 use crate::conf::BUFFER_SIZE;
 use crate::connection::Connection;
-use crate::file::{to_size_string, FileHandle, FileInfo};
+use crate::file::{FileHandle, FileInfo};
 use crate::handshake::Handshake;
 use crate::message::{FileNegotiationPayload, FileTransferPayload, Message};
+use crate::ui::prompt_user_input;
 
 use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
-use futures::future::try_join_all;
-use futures::prelude::*;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -19,7 +18,7 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 
 pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
     // Fail early if there are problems generating file handles
-    let handles = get_file_handles(file_paths).await?;
+    let handles = FileHandle::get_file_handles(file_paths).await?;
 
     // Establish connection to server
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
@@ -49,14 +48,6 @@ pub async fn receive(password: &String) -> Result<()> {
 
     download_files(&mut connection, files).await?;
     return Ok(());
-}
-
-pub async fn get_file_handles(file_paths: &Vec<PathBuf>) -> Result<Vec<FileHandle>> {
-    let tasks = file_paths
-        .into_iter()
-        .map(|path| FileHandle::new(path.to_path_buf()));
-    let handles = try_join_all(tasks).await?;
-    Ok(handles)
 }
 
 pub async fn negotiate_files_up(
@@ -189,27 +180,4 @@ pub async fn download_file(
     }
     println!("done receiving messages");
     Ok(())
-}
-
-pub async fn prompt_user_input(
-    stdin: &mut FramedRead<io::Stdin, LinesCodec>,
-    file_info: &FileInfo,
-) -> Option<bool> {
-    let prompt_name = file_info.path.file_name().unwrap();
-    println!(
-        "Accept {:?}? ({:?}). (Y/n)",
-        prompt_name,
-        to_size_string(file_info.size)
-    );
-    match stdin.next().await {
-        Some(Ok(line)) => match line.as_str() {
-            "" | "Y" | "y" | "yes" | "Yes" | "YES" => Some(true),
-            "N" | "n" | "NO" | "no" | "No" => Some(false),
-            _ => {
-                println!("Invalid input. Please enter one of the following characters: [YyNn]");
-                return None;
-            }
-        },
-        _ => None,
-    }
 }

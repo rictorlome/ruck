@@ -7,6 +7,7 @@ mod file;
 mod handshake;
 mod message;
 mod server;
+mod ui;
 
 use clap::Parser;
 use cli::{Cli, Commands};
