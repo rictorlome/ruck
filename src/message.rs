@@ -1,4 +1,4 @@
-use crate::file::FileInfo;
+use crate::file::{ChunkHeader, FileOffer};
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
@@ -8,28 +8,30 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Message {
-    FileNegotiationMessage(FileNegotiationPayload),
-    FileTransferMessage(FileTransferPayload),
+    FileOffer(FileOfferPayload),
+    FileRequest(FileRequestPayload),
+    FileTransfer(FileTransferPayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileNegotiationPayload {
-    pub files: Vec<FileInfo>,
+pub struct FileRequestPayload {
+    pub chunks: Vec<ChunkHeader>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileOfferPayload {
+    pub files: Vec<FileOffer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileTransferPayload {
-    pub file_info: FileInfo,
-    pub chunk_num: u64,
+    pub chunk_header: ChunkHeader,
     pub chunk: Bytes,
 }
 
 impl Message {
     pub fn serialize(&self) -> Result<Bytes> {
-        match bincode::serialize(&self) {
-            Ok(vec) => Ok(Bytes::from(vec)),
-            Err(e) => Err(anyhow!(e.to_string())),
-        }
+        bincode::serialize(&self).map(|vec| Ok(Bytes::from(vec)))?
     }
     pub fn deserialize(bytes: Bytes) -> Result<Self> {
         match bincode::deserialize(bytes.as_ref()) {

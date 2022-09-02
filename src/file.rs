@@ -1,28 +1,32 @@
 use anyhow::Result;
-
 use futures::future::try_join_all;
 
 use serde::{Deserialize, Serialize};
 use std::fs::Metadata;
 use std::path::PathBuf;
 
-use flate2::bufread::GzEncoder;
-use flate2::Compression;
-use std::io::{copy, BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use bytes::BytesMut;
+use std::io::{Read, Seek, SeekFrom};
+
 use tokio::fs::File;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkHeader {
     pub id: u8,
     pub start: u64,
-    pub end: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileInfo {
+pub struct FileOffer {
+    pub id: u8,
     pub path: PathBuf,
-    pub chunk_header: ChunkHeader,
+    pub size: u64,
+}
+
+pub struct StdFileHandle {
+    pub id: u8,
+    pub file: std::fs::File,
+    pub start: u64,
 }
 
 pub struct FileHandle {
@@ -30,12 +34,6 @@ pub struct FileHandle {
     pub file: File,
     pub md: Metadata,
     pub path: PathBuf,
-}
-
-impl Read for FileHandle {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        Ok(2)
-    }
 }
 
 impl FileHandle {
@@ -46,14 +44,45 @@ impl FileHandle {
         return Ok(fh);
     }
 
-    pub fn to_file_info(&self) -> FileInfo {
-        FileInfo {
+    pub async fn to_stds(
+        file_handles: Vec<FileHandle>,
+        chunk_headers: Vec<ChunkHeader>,
+    ) -> Vec<StdFileHandle> {
+        let mut ret = Vec::new();
+        for handle in file_handles {
+            let chunk = chunk_headers.iter().find(|chunk| handle.id == chunk.id);
+            match chunk {
+                Some(chunk) => {
+                    match handle.to_std(chunk).await {
+                        Ok(std_file_handle) => {
+                            ret.push(std_file_handle);
+                        }
+                        _ => println!("Error seeking in file"),
+                    };
+                }
+                None => {
+                    println!("Skipping file b/c not in requested chunks");
+                }
+            }
+        }
+        ret
+    }
+
+    async fn to_std(self, chunk_header: &ChunkHeader) -> Result<StdFileHandle> {
+        let mut std_file = self.file.into_std().await;
+        std_file.seek(SeekFrom::Start(chunk_header.start))?;
+        Ok(StdFileHandle {
+            id: self.id,
+            file: std_file,
+            start: chunk_header.start,
+        })
+    }
+
+    pub fn to_file_offer(&self) -> FileOffer {
+        FileOffer {
+            id: self.id,
             path: self.path.clone(),
-            chunk_header: ChunkHeader {
-                id: self.id,
-                start: 0,
-                end: self.md.len(),
-            },
+            size: self.md.len(),
         }
     }
 
@@ -66,16 +95,24 @@ impl FileHandle {
         Ok(handles)
     }
 
-    async fn count_lines(self, socket: TcpStream) -> Result<TcpStream, std::io::Error> {
-        let file = self.file.into_std().await;
-        let mut socket = socket;
-        tokio::task::spawn_blocking(move || {
-            let reader = BufReader::new(file);
-            let mut gz = GzEncoder::new(reader, Compression::fast());
-            copy(&mut gz, &mut socket)?;
-            Ok(socket)
-        })
-        .await?
+    pub fn to_message(
+        id: u8,
+        file: &mut std::fs::File,
+        buffer: &mut BytesMut,
+        start: u64,
+    ) -> Result<u64> {
+        // reads the next chunk of the file
+        // packs it into the buffer, with the header taking up the first X bytes
+        let chunk_header = ChunkHeader { id, start };
+        let chunk_bytes = bincode::serialize(&chunk_header)?;
+        println!(
+            "chunk_bytes = {:?}, len = {:?}",
+            chunk_bytes.clone(),
+            chunk_bytes.len()
+        );
+        buffer.extend_from_slice(&chunk_bytes[..]);
+        let n = file.read(buffer)? as u64;
+        Ok(n)
     }
 }
 

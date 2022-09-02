@@ -1,4 +1,4 @@
-use crate::conf::NONCE_SIZE_IN_BYTES;
+use crate::conf::NONCE_SIZE;
 use aes_gcm::aead::{Aead, NewAead};
 use aes_gcm::{Aes256Gcm, Key, Nonce}; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
@@ -8,7 +8,7 @@ use rand::{thread_rng, Rng};
 
 pub struct Crypt {
     cipher: Aes256Gcm,
-    arr: [u8; NONCE_SIZE_IN_BYTES],
+    arr: [u8; NONCE_SIZE],
 }
 
 impl Crypt {
@@ -16,7 +16,7 @@ impl Crypt {
         let key = Key::from_slice(&key[..]);
         Crypt {
             cipher: Aes256Gcm::new(key),
-            arr: [0u8; NONCE_SIZE_IN_BYTES],
+            arr: [0u8; NONCE_SIZE],
         }
     }
 
@@ -26,7 +26,7 @@ impl Crypt {
         let nonce = Nonce::from_slice(&self.arr);
         match self.cipher.encrypt(nonce, plaintext.as_ref()) {
             Ok(body) => {
-                let mut buffer = BytesMut::with_capacity(NONCE_SIZE_IN_BYTES + body.len());
+                let mut buffer = BytesMut::with_capacity(NONCE_SIZE + body.len());
                 buffer.extend_from_slice(nonce);
                 buffer.extend_from_slice(&body);
                 Ok(buffer.freeze())
@@ -38,7 +38,7 @@ impl Crypt {
     // Accepts wire format, includes nonce as prefix
     pub fn decrypt(&self, ciphertext: Bytes) -> Result<Bytes> {
         let mut ciphertext_body = ciphertext;
-        let nonce_bytes = ciphertext_body.split_to(NONCE_SIZE_IN_BYTES);
+        let nonce_bytes = ciphertext_body.split_to(NONCE_SIZE);
         let nonce = Nonce::from_slice(&nonce_bytes);
         match self.cipher.decrypt(nonce, ciphertext_body.as_ref()) {
             Ok(payload) => Ok(Bytes::from(payload)),

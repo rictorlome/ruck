@@ -1,4 +1,4 @@
-use crate::file::{to_size_string, FileInfo};
+use crate::file::{to_size_string, FileOffer};
 
 use futures::prelude::*;
 
@@ -6,15 +6,31 @@ use tokio::io::{self};
 
 use tokio_util::codec::{FramedRead, LinesCodec};
 
+pub async fn prompt_user_for_file_confirmation(file_offers: Vec<FileOffer>) -> Vec<FileOffer> {
+    let mut stdin = FramedRead::new(io::stdin(), LinesCodec::new());
+    let mut files = vec![];
+    for file_offer in file_offers.into_iter() {
+        let mut reply = prompt_user_input(&mut stdin, &file_offer).await;
+        while reply.is_none() {
+            reply = prompt_user_input(&mut stdin, &file_offer).await;
+        }
+        match reply {
+            Some(true) => files.push(file_offer),
+            _ => {}
+        }
+    }
+    files
+}
+
 pub async fn prompt_user_input(
     stdin: &mut FramedRead<io::Stdin, LinesCodec>,
-    file_info: &FileInfo,
+    file_offer: &FileOffer,
 ) -> Option<bool> {
-    let prompt_name = file_info.path.file_name().unwrap();
+    let prompt_name = file_offer.path.file_name().unwrap();
     println!(
         "Accept {:?}? ({:?}). (Y/n)",
         prompt_name,
-        to_size_string(file_info.chunk_header.end)
+        to_size_string(file_offer.size)
     );
     match stdin.next().await {
         Some(Ok(line)) => match line.as_str() {
