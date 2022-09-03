@@ -85,6 +85,7 @@ impl FileHandle {
     }
 
     async fn to_std(self, chunk_header: &ChunkHeader) -> Result<StdFileHandle> {
+        println!("{:?} requested start?", chunk_header.start);
         StdFileHandle::new(self.id, self.file, chunk_header.start, self.md.len()).await
     }
 
