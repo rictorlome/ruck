@@ -96,8 +96,8 @@ pub async fn request_specific_files(conn: &mut Connection) -> Result<Vec<StdFile
 pub async fn create_or_find_files(desired_files: Vec<FileOffer>) -> Result<Vec<StdFileHandle>> {
     let mut v = Vec::new();
     for desired_file in desired_files {
-        let mut filename = desired_file.path;
-        filename.push_str(".part");
+        let filename = desired_file.path;
+        // filename.push_str(".part");
         let file = match File::open(filename.clone()).await {
             Ok(file) => {
                 println!(
@@ -106,16 +106,23 @@ pub async fn create_or_find_files(desired_files: Vec<FileOffer>) -> Result<Vec<S
                 );
                 file
             }
-            Err(_) => File::create(filename).await?,
+            Err(_) => File::create(&filename).await?,
         };
         let metadata = file.metadata().await?;
         println!(
-            "Current len: {:?}, Full Size: {:?}",
+            "File: {:?}. Current len: {:?}, Full Size: {:?}",
+            filename.clone(),
             metadata.len(),
             desired_file.size
         );
-        let std_file_handle =
-            StdFileHandle::new(desired_file.id, file, metadata.len(), desired_file.size).await?;
+        let std_file_handle = StdFileHandle::new(
+            desired_file.id,
+            filename,
+            file,
+            metadata.len(),
+            desired_file.size,
+        )
+        .await?;
         v.push(std_file_handle)
     }
     return Ok(v);

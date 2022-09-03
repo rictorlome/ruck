@@ -24,20 +24,25 @@ pub struct FileOffer {
 
 pub struct StdFileHandle {
     pub id: u8,
+    pub name: String,
     pub file: std::fs::File,
     pub start: u64,
     pub size: u64,
 }
 
 impl StdFileHandle {
-    pub async fn new(id: u8, file: File, start: u64, size: u64) -> Result<StdFileHandle> {
+    pub async fn new(
+        id: u8,
+        name: String,
+        file: File,
+        start: u64,
+        size: u64,
+    ) -> Result<StdFileHandle> {
         let mut file = file.into_std().await;
         file.seek(SeekFrom::Start(start))?;
-        if start != 0 {
-            println!("Seeking to {:?}", start);
-        }
         Ok(StdFileHandle {
             id,
+            name,
             file,
             start,
             size,
@@ -85,8 +90,14 @@ impl FileHandle {
     }
 
     async fn to_std(self, chunk_header: &ChunkHeader) -> Result<StdFileHandle> {
-        println!("{:?} requested start?", chunk_header.start);
-        StdFileHandle::new(self.id, self.file, chunk_header.start, self.md.len()).await
+        StdFileHandle::new(
+            self.id,
+            pathbuf_to_string(&self.path)?,
+            self.file,
+            chunk_header.start,
+            self.md.len(),
+        )
+        .await
     }
 
     pub fn to_file_offer(&self) -> Result<FileOffer> {
@@ -130,6 +141,6 @@ pub fn pathbuf_to_string(path: &PathBuf) -> Result<String> {
     let filename = filename.to_os_string();
     match filename.into_string() {
         Ok(s) => Ok(s),
-        Err(e) => Err(anyhow!("Error converting {:?} to String", path)),
+        Err(_) => Err(anyhow!("Error converting {:?} to String", path)),
     }
 }

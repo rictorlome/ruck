@@ -81,12 +81,13 @@ impl Connection {
         let elapsed = before.elapsed();
         let mb_sent = bytes_sent / 1_048_576;
         println!(
-            "{:?} mb sent, {:?} iterations. {:?} total time, {:?} avg per iteration, {:?} avg mb/sec",
+            "{:?}: {:?} mb sent (compressed), {:?} iterations. {:?} total time, {:?} avg per iteration, {:?} avg mb/sec",
+            handle.name,
             mb_sent,
             count,
             elapsed,
             elapsed / count,
-            mb_sent / elapsed.as_secs()
+            1000 * mb_sent as u128 / elapsed.as_millis()
         );
         Ok(())
     }
@@ -112,7 +113,6 @@ impl Connection {
             let msg = self.await_msg().await?;
             match msg {
                 Message::FileTransfer(payload) => {
-                    println!("In download");
                     if payload.chunk_header.id != handle.id {
                         return Err(anyhow!("Wrong file"));
                     }
@@ -125,15 +125,19 @@ impl Connection {
             }
         }
         decoder.finish()?;
-        println!("Done downloading file.");
-        Connection::check_and_finish_download(clone, handle.size).await?;
+        println!("Done downloading {:?}.", handle.name);
+        Connection::check_and_finish_download(clone, handle.name, handle.size).await?;
         Ok(())
     }
 
-    pub async fn check_and_finish_download(file: std::fs::File, size: u64) -> Result<()> {
+    pub async fn check_and_finish_download(
+        file: std::fs::File,
+        filename: String,
+        size: u64,
+    ) -> Result<()> {
         let metadata = file.metadata()?;
         if metadata.len() == size {
-            println!("File looks good.");
+            println!("OK: downloaded {:?} matches advertised size.", filename);
             return Ok(());
         }
         return Err(anyhow!(
