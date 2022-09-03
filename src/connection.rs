@@ -1,16 +1,17 @@
-use crate::conf::{BUFFER_SIZE, CHUNK_HEADER_SIZE};
+use crate::conf::BUFFER_SIZE;
 use crate::crypto::Crypt;
-use crate::file::{ChunkHeader, FileHandle, StdFileHandle};
-use crate::message::{Message, MessageStream};
+use crate::file::{ChunkHeader, StdFileHandle};
+use crate::message::{FileTransferPayload, Message, MessageStream};
 use anyhow::{anyhow, Result};
 
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 
 use bytes::{Bytes, BytesMut};
-use flate2::write::{GzDecoder, GzEncoder};
+use flate2::bufread::GzEncoder;
+use flate2::write::GzDecoder;
 use flate2::Compression;
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 
 pub struct Connection {
     ms: MessageStream,
@@ -48,61 +49,64 @@ impl Connection {
         }
     }
 
-    pub async fn upload_files(mut self, handles: Vec<StdFileHandle>) -> Result<()> {
-        let mut socket = self.ms.into_inner().into_std()?;
-        tokio::task::spawn_blocking(move || {
-            for mut handle in handles {
-                let mut buffer = BytesMut::with_capacity(BUFFER_SIZE);
-                let mut start = handle.start;
-                loop {
-                    let end =
-                        FileHandle::to_message(handle.id, &mut handle.file, &mut buffer, start)?;
-                    let mut compressor = GzEncoder::new(Vec::new(), Compression::fast());
-                    compressor.write_all(&buffer[..])?;
-                    let compressed_bytes = compressor.finish()?;
-                    let encrypted_bytes = self.crypt.encrypt(Bytes::from(compressed_bytes))?;
-                    start = end;
-                    socket.write(&encrypted_bytes[..])?;
-                    if end == 0 {
-                        break;
-                    }
+    pub async fn upload_file(&mut self, handle: StdFileHandle) -> Result<()> {
+        let mut buffer = [0; BUFFER_SIZE];
+        let reader = BufReader::new(handle.file);
+        let mut gz = GzEncoder::new(reader, Compression::fast());
+        loop {
+            match gz.read(&mut buffer) {
+                Ok(0) => {
+                    break;
                 }
+                Ok(n) => {
+                    let message = Message::FileTransfer(FileTransferPayload {
+                        chunk: BytesMut::from(&buffer[..n]).freeze(),
+                        chunk_header: ChunkHeader {
+                            id: handle.id,
+                            start: 0,
+                        },
+                    });
+                    self.send_msg(message).await?;
+                }
+                Err(e) => return Err(anyhow!(e.to_string())),
             }
-            Ok(())
-        })
-        .await?
+        }
+        Ok(())
+    }
+
+    pub async fn upload_files(mut self, handles: Vec<StdFileHandle>) -> Result<()> {
+        for handle in handles {
+            self.upload_file(handle).await?;
+        }
+        Ok(())
     }
 
     pub async fn download_files(mut self, handles: Vec<StdFileHandle>) -> Result<()> {
-        let mut socket = self.ms.into_inner().into_std()?;
-        tokio::task::spawn_blocking(move || {
-            for mut handle in handles {
-                let mut buffer = BytesMut::with_capacity(BUFFER_SIZE);
-                let mut start = handle.start;
-                loop {
-                    // read bytes
-                    match socket.read(&mut buffer) {
-                        Ok(0) => {
-                            break;
-                        }
-                        Ok(n) => {
-                            let decrypted_bytes =
-                                self.crypt.decrypt(Bytes::from(&mut buffer[0..n]))?;
-                            let mut writer = Vec::new();
-                            let mut decompressor = GzDecoder::new(writer);
-                            decompressor.write_all(&decrypted_bytes[..])?;
-                            decompressor.try_finish()?;
-                            writer = decompressor.finish()?;
-                            let chunk_header: ChunkHeader =
-                                bincode::deserialize(&writer[..CHUNK_HEADER_SIZE])?;
-                            handle.file.write_all(&writer)
-                        }
-                        Err(e) => return Err(anyhow!(e.to_string())),
-                    };
+        for handle in handles {
+            self.download_file(handle).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn download_file(&mut self, handle: StdFileHandle) -> Result<()> {
+        let mut decoder = GzDecoder::new(handle.file);
+        loop {
+            let msg = self.await_msg().await?;
+            match msg {
+                Message::FileTransfer(payload) => {
+                    if payload.chunk_header.id != handle.id {
+                        return Err(anyhow!("Wrong file"));
+                    }
+                    if payload.chunk.len() == 0 {
+                        break;
+                    }
+                    decoder.write_all(&payload.chunk[..])?
                 }
+                _ => return Err(anyhow!("Expecting file transfer message")),
             }
-            Ok(())
-        })
-        .await?
+        }
+        decoder.finish()?;
+        println!("Done downloading file.");
+        Ok(())
     }
 }

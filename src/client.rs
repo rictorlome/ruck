@@ -100,12 +100,7 @@ pub async fn create_files(desired_files: Vec<FileOffer>) -> Result<Vec<StdFileHa
             .file_name()
             .unwrap_or(OsStr::new("random.txt"));
         let file = File::create(filename).await?;
-        let std_file = file.into_std().await;
-        let std_file_handle = StdFileHandle {
-            id: desired_file.id,
-            file: std_file,
-            start: 0,
-        };
+        let std_file_handle = StdFileHandle::new(desired_file.id, file, 0).await?;
         v.push(std_file_handle)
     }
     return Ok(v);

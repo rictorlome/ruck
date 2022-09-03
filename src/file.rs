@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::Metadata;
 use std::path::PathBuf;
 
-use bytes::BytesMut;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 
 use tokio::fs::File;
 
@@ -27,6 +26,18 @@ pub struct StdFileHandle {
     pub id: u8,
     pub file: std::fs::File,
     pub start: u64,
+}
+
+impl StdFileHandle {
+    pub async fn new(id: u8, file: File, start: u64) -> Result<StdFileHandle> {
+        let mut std_file = file.into_std().await;
+        std_file.seek(SeekFrom::Start(start))?;
+        Ok(StdFileHandle {
+            id: id,
+            file: std_file,
+            start: start,
+        })
+    }
 }
 
 pub struct FileHandle {
@@ -69,13 +80,7 @@ impl FileHandle {
     }
 
     async fn to_std(self, chunk_header: &ChunkHeader) -> Result<StdFileHandle> {
-        let mut std_file = self.file.into_std().await;
-        std_file.seek(SeekFrom::Start(chunk_header.start))?;
-        Ok(StdFileHandle {
-            id: self.id,
-            file: std_file,
-            start: chunk_header.start,
-        })
+        StdFileHandle::new(self.id, self.file, chunk_header.start).await
     }
 
     pub fn to_file_offer(&self) -> FileOffer {
@@ -93,26 +98,6 @@ impl FileHandle {
             .map(|(idx, path)| FileHandle::new(idx.try_into().unwrap(), path.to_path_buf()));
         let handles = try_join_all(tasks).await?;
         Ok(handles)
-    }
-
-    pub fn to_message(
-        id: u8,
-        file: &mut std::fs::File,
-        buffer: &mut BytesMut,
-        start: u64,
-    ) -> Result<u64> {
-        // reads the next chunk of the file
-        // packs it into the buffer, with the header taking up the first X bytes
-        let chunk_header = ChunkHeader { id, start };
-        let chunk_bytes = bincode::serialize(&chunk_header)?;
-        println!(
-            "chunk_bytes = {:?}, len = {:?}",
-            chunk_bytes.clone(),
-            chunk_bytes.len()
-        );
-        buffer.extend_from_slice(&chunk_bytes[..]);
-        let n = file.read(buffer)? as u64;
-        Ok(n)
     }
 }
 
