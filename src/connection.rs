@@ -12,6 +12,7 @@ use flate2::bufread::GzEncoder;
 use flate2::write::GzDecoder;
 use flate2::Compression;
 use std::io::{BufReader, Read, Write};
+use std::time::Instant;
 
 pub struct Connection {
     ms: MessageStream,
@@ -53,12 +54,17 @@ impl Connection {
         let mut buffer = [0; BUFFER_SIZE];
         let reader = BufReader::new(handle.file);
         let mut gz = GzEncoder::new(reader, Compression::fast());
+        let before = Instant::now();
+        let mut count = 0;
+        let mut bytes_sent: u64 = 0;
         loop {
+            count += 1;
             match gz.read(&mut buffer) {
                 Ok(0) => {
                     break;
                 }
                 Ok(n) => {
+                    bytes_sent += n as u64;
                     let message = Message::FileTransfer(FileTransferPayload {
                         chunk: BytesMut::from(&buffer[..n]).freeze(),
                         chunk_header: ChunkHeader {
@@ -71,6 +77,16 @@ impl Connection {
                 Err(e) => return Err(anyhow!(e.to_string())),
             }
         }
+        let elapsed = before.elapsed();
+        let mb_sent = bytes_sent / 1_048_576;
+        println!(
+            "{:?} mb sent, {:?} iterations. {:?} total time, {:?} avg per iteration, {:?} avg mb/sec",
+            mb_sent,
+            count,
+            elapsed,
+            elapsed / count,
+            mb_sent / elapsed.as_secs()
+        );
         Ok(())
     }
 
