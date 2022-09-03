@@ -1,69 +1,48 @@
-use crate::message::{EncryptedPayload, HandshakePayload, Message, MessageStream};
-
+use crate::conf::NONCE_SIZE;
 use aes_gcm::aead::{Aead, NewAead};
 use aes_gcm::{Aes256Gcm, Key, Nonce}; // Or `Aes128Gcm`
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
-use futures::prelude::*;
+use bytes::{Bytes, BytesMut};
+
 use rand::{thread_rng, Rng};
-use spake2::{Ed25519Group, Identity, Password, Spake2};
 
-pub async fn handshake(
-    stream: &mut MessageStream,
-    password: Bytes,
-    id: Bytes,
-) -> Result<(&mut MessageStream, Aes256Gcm)> {
-    let (s1, outbound_msg) =
-        Spake2::<Ed25519Group>::start_symmetric(&Password::new(password), &Identity::new(&id));
-    println!("client - sending handshake msg");
-    let handshake_msg = Message::HandshakeMessage(HandshakePayload {
-        id,
-        msg: Bytes::from(outbound_msg),
-    });
-    // println!("client - handshake msg, {:?}", handshake_msg);
-    stream.send(handshake_msg).await?;
-    let first_message = match stream.next().await {
-        Some(Ok(msg)) => match msg {
-            Message::HandshakeMessage(response) => response.msg,
-            _ => return Err(anyhow!("Expecting handshake message response")),
-        },
-        _ => {
-            return Err(anyhow!("No response to handshake message"));
+pub struct Crypt {
+    cipher: Aes256Gcm,
+    arr: [u8; NONCE_SIZE],
+}
+
+impl Crypt {
+    pub fn new(key: &Vec<u8>) -> Crypt {
+        let key = Key::from_slice(&key[..]);
+        Crypt {
+            cipher: Aes256Gcm::new(key),
+            arr: [0u8; NONCE_SIZE],
         }
-    };
-    println!("client - handshake msg responded to");
-    let key = match s1.finish(&first_message[..]) {
-        Ok(key_bytes) => key_bytes,
-        Err(e) => return Err(anyhow!(e.to_string())),
-    };
-    // println!("Handshake successful. Key is {:?}", key);
-    return Ok((stream, new_cipher(&key)));
-}
-
-pub fn new_cipher(key: &Vec<u8>) -> Aes256Gcm {
-    let key = Key::from_slice(&key[..]);
-    Aes256Gcm::new(key)
-}
-
-pub const NONCE_SIZE_IN_BYTES: usize = 96 / 8;
-pub fn encrypt(cipher: &Aes256Gcm, body: &Vec<u8>) -> Result<EncryptedPayload> {
-    let mut arr = [0u8; NONCE_SIZE_IN_BYTES];
-    thread_rng().try_fill(&mut arr[..])?;
-    let nonce = Nonce::from_slice(&arr);
-    let plaintext = body.as_ref();
-    match cipher.encrypt(nonce, plaintext) {
-        Ok(body) => Ok(EncryptedPayload {
-            nonce: arr.to_vec(),
-            body,
-        }),
-        Err(_) => Err(anyhow!("Encryption error")),
     }
-}
 
-pub fn decrypt(cipher: &Aes256Gcm, payload: &EncryptedPayload) -> Result<Bytes> {
-    let nonce = Nonce::from_slice(payload.nonce.as_ref());
-    match cipher.decrypt(nonce, payload.body.as_ref()) {
-        Ok(payload) => Ok(Bytes::from(payload)),
-        Err(_) => Err(anyhow!("Decryption error")),
+    // Returns wire format, includes nonce as prefix
+    pub fn encrypt(&mut self, plaintext: Bytes) -> Result<Bytes> {
+        thread_rng().try_fill(&mut self.arr[..])?;
+        let nonce = Nonce::from_slice(&self.arr);
+        match self.cipher.encrypt(nonce, plaintext.as_ref()) {
+            Ok(body) => {
+                let mut buffer = BytesMut::with_capacity(NONCE_SIZE + body.len());
+                buffer.extend_from_slice(nonce);
+                buffer.extend_from_slice(&body);
+                Ok(buffer.freeze())
+            }
+            Err(e) => Err(anyhow!(e.to_string())),
+        }
+    }
+
+    // Accepts wire format, includes nonce as prefix
+    pub fn decrypt(&self, ciphertext: Bytes) -> Result<Bytes> {
+        let mut ciphertext_body = ciphertext;
+        let nonce_bytes = ciphertext_body.split_to(NONCE_SIZE);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        match self.cipher.decrypt(nonce, ciphertext_body.as_ref()) {
+            Ok(payload) => Ok(Bytes::from(payload)),
+            Err(e) => Err(anyhow!(e.to_string())),
+        }
     }
 }

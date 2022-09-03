@@ -1,16 +1,16 @@
-use crate::message::{HandshakePayload, Message, MessageStream, RuckError};
-
+use crate::conf::PER_CLIENT_BUFFER;
+use crate::handshake::Handshake;
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
-use futures::prelude::*;
+use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 
-type Tx = mpsc::UnboundedSender<Message>;
-type Rx = mpsc::UnboundedReceiver<Message>;
+type Tx = mpsc::UnboundedSender<Bytes>;
+type Rx = mpsc::UnboundedReceiver<Bytes>;
 
 pub struct Shared {
     handshake_cache: HashMap<Bytes, Tx>,
@@ -18,12 +18,12 @@ pub struct Shared {
 type State = Arc<Mutex<Shared>>;
 
 struct Client {
-    messages: MessageStream,
+    socket: TcpStream,
     rx: Rx,
     peer_tx: Option<Tx>,
 }
 struct StapledClient {
-    messages: MessageStream,
+    socket: TcpStream,
     rx: Rx,
     peer_tx: Tx,
 }
@@ -37,11 +37,11 @@ impl Shared {
 }
 
 impl Client {
-    async fn new(id: Bytes, state: State, messages: MessageStream) -> Result<Client> {
+    async fn new(id: Bytes, state: State, socket: TcpStream) -> Result<Client> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut shared = state.lock().await;
         let client = Client {
-            messages,
+            socket,
             rx,
             peer_tx: shared.handshake_cache.remove(&id),
         };
@@ -49,11 +49,7 @@ impl Client {
         Ok(client)
     }
 
-    async fn upgrade(
-        client: Client,
-        state: State,
-        handshake_payload: HandshakePayload,
-    ) -> Result<StapledClient> {
+    async fn upgrade(client: Client, state: State, handshake: Handshake) -> Result<StapledClient> {
         let mut client = client;
         let peer_tx = match client.peer_tx {
             // Receiver - already stapled at creation
@@ -61,28 +57,21 @@ impl Client {
             // Sender - needs to wait for the incoming msg to look up peer_tx
             None => {
                 tokio::select! {
+                    // Client reads handshake message sent over channel
                     Some(msg) = client.rx.recv() => {
-                        client.messages.send(msg).await?
-                    }
-                    result = client.messages.next() => match result {
-                        Some(_) => return Err(anyhow!("Client sending more messages before handshake complete")),
-                        None => return Err(anyhow!("Connection interrupted")),
+                        // Writes parnter handshake message over wire
+                        client.socket.write_all(&msg[..]).await?
                     }
                 }
-                match state
-                    .lock()
-                    .await
-                    .handshake_cache
-                    .remove(&handshake_payload.id)
-                {
+                match state.lock().await.handshake_cache.remove(&handshake.id) {
                     Some(peer_tx) => peer_tx,
                     None => return Err(anyhow!("Connection not stapled")),
                 }
             }
         };
-        peer_tx.send(Message::HandshakeMessage(handshake_payload))?;
+        peer_tx.send(handshake.outbound_msg)?;
         Ok(StapledClient {
-            messages: client.messages,
+            socket: client.socket,
             rx: client.rx,
             peer_tx,
         })
@@ -109,26 +98,14 @@ pub async fn serve() -> Result<()> {
 pub async fn handle_connection(
     state: Arc<Mutex<Shared>>,
     socket: TcpStream,
-    addr: SocketAddr,
+    _addr: SocketAddr,
 ) -> Result<()> {
-    let mut stream = Message::to_stream(socket);
-    println!("server - new conn from {:?}", addr);
-    let handshake_payload = match stream.next().await {
-        Some(Ok(Message::HandshakeMessage(payload))) => payload,
-        Some(Ok(_)) => {
-            stream
-                .send(Message::ErrorMessage(RuckError::NotHandshake))
-                .await?;
-            return Ok(());
-        }
-        _ => {
-            println!("No first message");
-            return Ok(());
-        }
-    };
-    let id = handshake_payload.id.clone();
-    let client = Client::new(id.clone(), state.clone(), stream).await?;
-    let mut client = match Client::upgrade(client, state.clone(), handshake_payload).await {
+    socket.readable().await?;
+    let (handshake, socket) = Handshake::from_socket(socket).await?;
+    let id = handshake.id.clone();
+    let client = Client::new(id.clone(), state.clone(), socket).await?;
+    println!("Client created");
+    let mut client = match Client::upgrade(client, state.clone(), handshake).await {
         Ok(client) => client,
         Err(err) => {
             // Clear handshake cache if staple is unsuccessful
@@ -136,22 +113,30 @@ pub async fn handle_connection(
             return Err(err);
         }
     };
+    println!("Client upgraded");
     // The handshake cache should be empty for {id} at this point.
+    let mut client_buffer = BytesMut::with_capacity(PER_CLIENT_BUFFER);
     loop {
         tokio::select! {
             Some(msg) = client.rx.recv() => {
-                client.messages.send(msg).await?
+                // println!("piping bytes= {:?}", msg);
+                client.socket.write_all(&msg[..]).await?
             }
-            result = client.messages.next() => match result {
-                Some(Ok(msg)) => {
-                    client.peer_tx.send(msg)?
-                }
-                Some(Err(e)) => {
+            result = client.socket.read_buf(&mut client_buffer) => match result {
+                Ok(0) => {
+                    break;
+                },
+                Ok(n) => {
+                    let b = BytesMut::from(&client_buffer[0..n]).freeze();
+                    client.peer_tx.send(b)?;
+                    client_buffer.clear();
+                },
+                Err(e) => {
                     println!("Error {:?}", e);
                 }
-                None => break,
             }
         }
     }
+    println!("done with client");
     Ok(())
 }
