@@ -6,7 +6,6 @@ use crate::ui::prompt_user_for_file_confirmation;
 
 use anyhow::{anyhow, Result};
 
-use std::ffi::OsStr;
 use std::path::PathBuf;
 use tokio::fs::File;
 
@@ -46,7 +45,7 @@ pub async fn receive(password: &String) -> Result<()> {
     // Wait for offered files, respond with desired files
     let desired_files = request_specific_files(&mut connection).await?;
     // Create files
-    let std_file_handles = create_files(desired_files).await?;
+    let std_file_handles = create_or_find_files(desired_files).await?;
     // Download them
     connection.download_files(std_file_handles).await?;
     return Ok(());
@@ -57,7 +56,10 @@ pub async fn offer_files(
     file_handles: &Vec<FileHandle>,
 ) -> Result<Vec<ChunkHeader>> {
     // Collect file offer
-    let files = file_handles.iter().map(|fh| fh.to_file_offer()).collect();
+    let mut files = vec![];
+    for handle in file_handles {
+        files.push(handle.to_file_offer()?);
+    }
     let msg = Message::FileOffer(FileOfferPayload { files });
     // Send file offer
     conn.send_msg(msg).await?;
@@ -92,15 +94,24 @@ pub async fn request_specific_files(conn: &mut Connection) -> Result<Vec<FileOff
     Ok(desired_files)
 }
 
-pub async fn create_files(desired_files: Vec<FileOffer>) -> Result<Vec<StdFileHandle>> {
+pub async fn create_or_find_files(desired_files: Vec<FileOffer>) -> Result<Vec<StdFileHandle>> {
     let mut v = Vec::new();
     for desired_file in desired_files {
-        let filename = desired_file
-            .path
-            .file_name()
-            .unwrap_or(OsStr::new("random.txt"));
-        let file = File::create(filename).await?;
-        let std_file_handle = StdFileHandle::new(desired_file.id, file, 0).await?;
+        let mut filename = desired_file.path;
+        filename.push_str(".part");
+        let file = match File::open(filename.clone()).await {
+            Ok(file) => {
+                println!(
+                    "File {:?} already exists. Attempting to resume download.",
+                    filename
+                );
+                file
+            }
+            Err(_) => File::create(filename).await?,
+        };
+        let metadata = file.metadata().await?;
+        let std_file_handle =
+            StdFileHandle::new(desired_file.id, file, metadata.len(), desired_file.size).await?;
         v.push(std_file_handle)
     }
     return Ok(v);

@@ -77,6 +77,7 @@ impl Connection {
                 Err(e) => return Err(anyhow!(e.to_string())),
             }
         }
+        self.send_msg(Message::FileTransferComplete).await?;
         let elapsed = before.elapsed();
         let mb_sent = bytes_sent / 1_048_576;
         println!(
@@ -105,24 +106,38 @@ impl Connection {
     }
 
     pub async fn download_file(&mut self, handle: StdFileHandle) -> Result<()> {
+        let clone = handle.file.try_clone()?;
         let mut decoder = GzDecoder::new(handle.file);
         loop {
             let msg = self.await_msg().await?;
             match msg {
                 Message::FileTransfer(payload) => {
+                    println!("In download");
                     if payload.chunk_header.id != handle.id {
                         return Err(anyhow!("Wrong file"));
                     }
-                    if payload.chunk.len() == 0 {
-                        break;
-                    }
                     decoder.write_all(&payload.chunk[..])?
+                }
+                Message::FileTransferComplete => {
+                    break;
                 }
                 _ => return Err(anyhow!("Expecting file transfer message")),
             }
         }
         decoder.finish()?;
         println!("Done downloading file.");
+        Connection::check_and_finish_download(clone, handle.size).await?;
         Ok(())
+    }
+
+    pub async fn check_and_finish_download(file: std::fs::File, size: u64) -> Result<()> {
+        let metadata = file.metadata()?;
+        if metadata.len() == size {
+            println!("File looks good.");
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "Downloaded file does not match expected size. Try again"
+        ));
     }
 }

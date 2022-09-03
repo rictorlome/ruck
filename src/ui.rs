@@ -26,7 +26,7 @@ pub async fn prompt_user_input(
     stdin: &mut FramedRead<io::Stdin, LinesCodec>,
     file_offer: &FileOffer,
 ) -> Option<bool> {
-    let prompt_name = file_offer.path.file_name().unwrap();
+    let prompt_name = &file_offer.path;
     println!(
         "Accept {:?}? ({:?}). (Y/n)",
         prompt_name,
