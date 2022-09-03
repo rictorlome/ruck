@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::future::try_join_all;
 
 use serde::{Deserialize, Serialize};
@@ -18,24 +18,34 @@ pub struct ChunkHeader {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileOffer {
     pub id: u8,
-    pub path: PathBuf,
+    pub path: String,
     pub size: u64,
 }
 
 pub struct StdFileHandle {
     pub id: u8,
+    pub name: String,
     pub file: std::fs::File,
     pub start: u64,
+    pub size: u64,
 }
 
 impl StdFileHandle {
-    pub async fn new(id: u8, file: File, start: u64) -> Result<StdFileHandle> {
-        let mut std_file = file.into_std().await;
-        std_file.seek(SeekFrom::Start(start))?;
+    pub async fn new(
+        id: u8,
+        name: String,
+        file: File,
+        start: u64,
+        size: u64,
+    ) -> Result<StdFileHandle> {
+        let mut file = file.into_std().await;
+        file.seek(SeekFrom::Start(start))?;
         Ok(StdFileHandle {
-            id: id,
-            file: std_file,
-            start: start,
+            id,
+            name,
+            file,
+            start,
+            size,
         })
     }
 }
@@ -80,15 +90,22 @@ impl FileHandle {
     }
 
     async fn to_std(self, chunk_header: &ChunkHeader) -> Result<StdFileHandle> {
-        StdFileHandle::new(self.id, self.file, chunk_header.start).await
+        StdFileHandle::new(
+            self.id,
+            pathbuf_to_string(&self.path)?,
+            self.file,
+            chunk_header.start,
+            self.md.len(),
+        )
+        .await
     }
 
-    pub fn to_file_offer(&self) -> FileOffer {
-        FileOffer {
+    pub fn to_file_offer(&self) -> Result<FileOffer> {
+        Ok(FileOffer {
             id: self.id,
-            path: self.path.clone(),
+            path: pathbuf_to_string(&self.path)?,
             size: self.md.len(),
-        }
+        })
     }
 
     pub async fn get_file_handles(file_paths: &Vec<PathBuf>) -> Result<Vec<FileHandle>> {
@@ -114,4 +131,16 @@ pub fn to_size_string(size: u64) -> String {
     result.push_str(SUFFIX[base.floor() as usize]);
 
     result
+}
+
+pub fn pathbuf_to_string(path: &PathBuf) -> Result<String> {
+    let filename = match path.file_name() {
+        Some(s) => s,
+        None => return Err(anyhow!("Could not get filename from file offer.")),
+    };
+    let filename = filename.to_os_string();
+    match filename.into_string() {
+        Ok(s) => Ok(s),
+        Err(_) => Err(anyhow!("Error converting {:?} to String", path)),
+    }
 }

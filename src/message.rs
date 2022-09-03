@@ -11,6 +11,7 @@ pub enum Message {
     FileOffer(FileOfferPayload),
     FileRequest(FileRequestPayload),
     FileTransfer(FileTransferPayload),
+    FileTransferComplete,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

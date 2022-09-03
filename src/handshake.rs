@@ -49,7 +49,7 @@ impl Handshake {
     ) -> Result<(TcpStream, Vec<u8>)> {
         let mut socket = socket;
         let bytes = &self.to_bytes();
-        println!("client - sending handshake msg= {:?}", &bytes);
+        // println!("client - sending handshake msg= {:?}", &bytes);
         socket.write_all(&bytes).await?;
         let mut buffer = [0; HANDSHAKE_MSG_SIZE];
         let n = socket.read_exact(&mut buffer).await?;

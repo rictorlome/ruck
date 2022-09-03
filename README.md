@@ -2,11 +2,22 @@
 
 `ruck` is a command line tool used for hosting relay servers and sending end-to-end encrypted files between clients. It was heavily inspired by [croc](https://github.com/schollz/croc), one of the easiest ways to send files between peers. This document describes the protocol `ruck` uses to support this functionality.
 
-### Version
+## Usage
 
-This document refers to version `0.1.0` of `ruck` as defined by the `Cargo.toml` file.
+```bash
+## tab 1
+cargo run relay # this starts the server
 
-## Server
+## tab 2
+cargo run send /path/to/file1.md /path/to/file2.md supersecretpassword
+
+## tab 3
+cargo run receive supersecretpassword
+```
+
+## Protocol
+
+### Server
 
 The server in `ruck` exposes a TCP port.
 Its only functions are to staple connections and shuttle bytes between stapled connections.
@@ -19,7 +30,7 @@ The time out is set to remove idle connections.
 The server does nothing else with the bytes, so the clients are free to end-to-end encrypt their messages.
 For this reason, updates to the `ruck` protocol do not typically necessitate server redeployments.
 
-## Client
+### Client
 
 There are two types of clients - `send` and `receive` clients.
 Out of band, the clients agree on a relay server and password, from which they can derive the 32 byte identifier used by the server to staple their connections.
@@ -29,7 +40,5 @@ Once the handshake is complete, `send` and `receive` negotiate and exchange file
 
 - `send` offers a list of files and waits.
 - `receive` specifies which bytes it wants from these files.
-- `send` sends the specified bytes and waits.
-- `receive` sends heartbeats with progress updates.
-- `send` hangs up once the heartbeats stop or received a successful heartbeat.
+- `send` sends the specified bytes, then a completion message and hangs up.
 - `receive` hangs up once the downloads are complete.
