@@ -6,6 +6,7 @@ mod crypto;
 mod file;
 mod handshake;
 mod message;
+mod password;
 mod server;
 mod ui;
 

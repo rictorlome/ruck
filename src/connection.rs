@@ -81,7 +81,7 @@ impl Connection {
         let elapsed = before.elapsed();
         let mb_sent = bytes_sent / 1_048_576;
         println!(
-            "{:?}: {:?} mb sent (compressed), {:?} iterations. {:?} total time, {:?} avg per iteration, {:?} avg mb/sec",
+            "{:?}: {:?} mb sent (compressed), {:?} messages. {:?} total time, {:?} avg per msg, {:?} avg mb/sec",
             handle.name,
             mb_sent,
             count,

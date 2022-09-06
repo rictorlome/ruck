@@ -13,8 +13,8 @@ pub struct Handshake {
 }
 
 impl Handshake {
-    pub fn from_password(pw: &String) -> (Handshake, spake2::Spake2<spake2::Ed25519Group>) {
-        let password = Bytes::from(pw.to_string());
+    pub fn from_password(pw: &String) -> Result<(Handshake, spake2::Spake2<spake2::Ed25519Group>)> {
+        let password = Bytes::from(pw.clone());
         let id = Handshake::pass_to_bytes(&pw);
         let (s1, outbound_msg) =
             Spake2::<Ed25519Group>::start_symmetric(&Password::new(&password), &Identity::new(&id));
@@ -22,7 +22,7 @@ impl Handshake {
         buffer.extend_from_slice(&outbound_msg[..HANDSHAKE_MSG_SIZE]);
         let outbound_msg = buffer.freeze();
         let handshake = Handshake { id, outbound_msg };
-        (handshake, s1)
+        Ok((handshake, s1))
     }
 
     pub async fn from_socket(socket: TcpStream) -> Result<(Handshake, TcpStream)> {
@@ -64,9 +64,7 @@ impl Handshake {
     }
 
     fn pass_to_bytes(password: &String) -> Bytes {
-        let mut hasher = Blake2s256::new();
-        hasher.update(password.as_bytes());
-        let res = hasher.finalize();
-        BytesMut::from(&res[..]).freeze()
+        let bytes = Blake2s256::digest(password.as_bytes());
+        BytesMut::from(&bytes[..]).freeze()
     }
 }

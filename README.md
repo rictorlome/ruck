@@ -4,15 +4,22 @@
 
 ## Usage
 
-```bash
-## tab 1
-cargo run relay # this starts the server
+```
+ruck 0.1.0
+A croc-inspired tool for hosting relay servers and sending e2e encrypted files.
 
-## tab 2
-cargo run send /path/to/file1.md /path/to/file2.md supersecretpassword
+USAGE:
+    ruck <SUBCOMMAND>
 
-## tab 3
-cargo run receive supersecretpassword
+OPTIONS:
+    -h, --help       Print help information
+    -V, --version    Print version information
+
+SUBCOMMANDS:
+    help       Print this message or the help of the given subcommand(s)
+    receive    Receive file(s). Must provide password shared out of band
+    relay      Start relay server
+    send       Send file(s). Can provide optional password
 ```
 
 ## Protocol

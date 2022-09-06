@@ -2,23 +2,29 @@ use crate::connection::Connection;
 use crate::file::{ChunkHeader, FileHandle, FileOffer, StdFileHandle};
 use crate::handshake::Handshake;
 use crate::message::{FileOfferPayload, FileRequestPayload, Message};
+use crate::password::validate_generate_pw;
 use crate::ui::prompt_user_for_file_confirmation;
 
 use anyhow::{anyhow, Result};
 
 use std::path::PathBuf;
-use tokio::fs::File;
+use tokio::fs::{File, OpenOptions};
 
 use tokio::net::TcpStream;
 
-pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
+pub async fn send(file_paths: &Vec<PathBuf>, password: &Option<String>) -> Result<()> {
     // Fail early if there are problems generating file handles
     let handles = FileHandle::get_file_handles(file_paths).await?;
 
     // Establish connection to server
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
 
-    let (handshake, s1) = Handshake::from_password(password);
+    let pw = validate_generate_pw(password.clone())?;
+    println!(
+        "Type `ruck receive {}` on other end to receive file(s).",
+        pw
+    );
+    let (handshake, s1) = Handshake::from_password(&pw)?;
     // Complete handshake, returning key used for encryption
     let (socket, key) = handshake.negotiate(socket, s1).await?;
 
@@ -38,7 +44,7 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &String) -> Result<()> {
 pub async fn receive(password: &String) -> Result<()> {
     // Establish connection to server
     let socket = TcpStream::connect("127.0.0.1:8080").await?;
-    let (handshake, s1) = Handshake::from_password(password);
+    let (handshake, s1) = Handshake::from_password(password)?;
     // Complete handshake, returning key used for encryption
     let (socket, key) = handshake.negotiate(socket, s1).await?;
     let mut connection = Connection::new(socket, key);
@@ -97,8 +103,7 @@ pub async fn create_or_find_files(desired_files: Vec<FileOffer>) -> Result<Vec<S
     let mut v = Vec::new();
     for desired_file in desired_files {
         let filename = desired_file.path;
-        // filename.push_str(".part");
-        let file = match File::open(filename.clone()).await {
+        let file = match OpenOptions::new().append(true).open(&filename).await {
             Ok(file) => {
                 println!(
                     "File {:?} already exists. Attempting to resume download.",

@@ -82,7 +82,7 @@ impl FileHandle {
                     };
                 }
                 None => {
-                    println!("Skipping file b/c not in requested chunks");
+                    println!("Skipping {:?} b/c not in requested chunks.", handle.path);
                 }
             }
         }
