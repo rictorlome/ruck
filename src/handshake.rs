@@ -18,9 +18,7 @@ impl Handshake {
         let id = Handshake::pass_to_bytes(&pw);
         let (s1, outbound_msg) =
             Spake2::<Ed25519Group>::start_symmetric(&Password::new(&password), &Identity::new(&id));
-        let mut buffer = BytesMut::with_capacity(HANDSHAKE_MSG_SIZE);
-        buffer.extend_from_slice(&outbound_msg[..HANDSHAKE_MSG_SIZE]);
-        let outbound_msg = buffer.freeze();
+        let outbound_msg = Bytes::from(outbound_msg);
         let handshake = Handshake { id, outbound_msg };
         Ok((handshake, s1))
     }
@@ -53,6 +51,7 @@ impl Handshake {
         socket.write_all(&bytes).await?;
         let mut buffer = [0; HANDSHAKE_MSG_SIZE];
         let n = socket.read_exact(&mut buffer).await?;
+        // println!("reading response");
         let response = BytesMut::from(&buffer[..n]).freeze();
         // println!("client - handshake msg, {:?}", response);
         let key = match s1.finish(&response[..]) {
