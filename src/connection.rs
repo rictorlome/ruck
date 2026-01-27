@@ -15,7 +15,7 @@ use bytes::{Bytes, BytesMut};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
-use tracing::info;
+use colored::Colorize;
 
 // Message type prefixes for wire protocol
 const MSG_TYPE_CONTROL: u8 = 0x00;
@@ -137,7 +137,7 @@ impl Connection {
         pb.set_message(handle.name.clone());
 
         let mut buffer = vec![0u8; BUFFER_SIZE];
-        let mut count = 0u32;
+
         let mut bytes_sent: u64 = 0;
 
         if use_compression {
@@ -147,7 +147,7 @@ impl Connection {
                 if n == 0 {
                     break;
                 }
-                count += 1;
+
                 bytes_sent += n as u64;
                 pb.set_position(bytes_sent.min(handle.size));
 
@@ -161,7 +161,7 @@ impl Connection {
                 if n == 0 {
                     break;
                 }
-                count += 1;
+
                 bytes_sent += n as u64;
                 pb.set_position(bytes_sent);
 
@@ -178,14 +178,12 @@ impl Connection {
         let elapsed = before.elapsed();
         let mb_sent = bytes_sent as f64 / 1_048_576.0;
         let elapsed_secs = elapsed.as_secs_f64().max(0.001);
-        let compression_label = if use_compression { "compressed" } else { "raw" };
-        info!(
-            file = %handle.name,
-            mb = format!("{:.1}", mb_sent),
-            mode = compression_label,
-            chunks = count,
-            throughput_mbps = format!("{:.1}", mb_sent / elapsed_secs),
-            "Upload complete"
+        println!(
+            "{} {} ({:.1} MB, {:.1} MB/s)",
+            "Sent".green(),
+            handle.name,
+            mb_sent,
+            mb_sent / elapsed_secs
         );
         Ok(())
     }
@@ -295,13 +293,12 @@ impl Connection {
         let elapsed = before.elapsed();
         let mb_received = bytes_received as f64 / 1_048_576.0;
         let elapsed_secs = elapsed.as_secs_f64().max(0.001);
-        let compression_label = if use_compression { "compressed" } else { "raw" };
-        info!(
-            file = %handle.name,
-            mb = format!("{:.1}", mb_received),
-            mode = compression_label,
-            throughput_mbps = format!("{:.1}", mb_received / elapsed_secs),
-            "Download complete"
+        println!(
+            "{} {} ({:.1} MB, {:.1} MB/s)",
+            "Received".green(),
+            handle.name,
+            mb_received,
+            mb_received / elapsed_secs
         );
 
         // Verify file size
@@ -312,12 +309,11 @@ impl Connection {
 
     pub async fn check_and_finish_download(
         file: std::fs::File,
-        filename: String,
+        _filename: String,
         size: u64,
     ) -> Result<()> {
         let metadata = file.metadata()?;
         if metadata.len() == size {
-            info!(file = %filename, size = size, "File verified");
             return Ok(());
         }
         return Err(anyhow!(

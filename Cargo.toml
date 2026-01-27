@@ -1,6 +1,6 @@
 [package]
 name = "ruck-relay"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A croc-inspired tool for hosting relay servers and sending e2e encrypted files."
 license = "MIT"
@@ -25,3 +25,4 @@ tokio-util = { version = "0.6.3", features = ["full"]}
 indicatif = "0.17"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+colored = "2"

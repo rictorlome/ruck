@@ -6,7 +6,7 @@ use bytes::{Bytes, BytesMut};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tracing::{debug, info};
+use tracing::debug;
 
 pub struct Handshake {
     pub id: Bytes,
@@ -56,7 +56,7 @@ impl Handshake {
             Ok(key_bytes) => key_bytes,
             Err(e) => return Err(anyhow!(e.to_string())),
         };
-        info!("Handshake successful");
+        debug!("Handshake successful");
         return Ok((socket, key));
     }
 
