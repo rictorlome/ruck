@@ -2,6 +2,8 @@
 
 `ruck` is a command line tool used for hosting relay servers and sending end-to-end encrypted files between clients. It was heavily inspired by [croc](https://github.com/schollz/croc), one of the easiest ways to send files between peers. This document describes the protocol `ruck` uses to support this functionality.
 
+I am hosting a deployment of the relay server at `174.138.70.74:8080`, which is the current default relay address, so the `send` and `receive` commands can be used without additional configuration.
+
 ## Usage
 
 ```
@@ -21,6 +23,16 @@ SUBCOMMANDS:
     relay      Start relay server
     send       Send file(s). Can provide optional password
 ```
+
+## Configuration
+
+The relay server accepts the following options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bind` | `0.0.0.0:8080` | Address to bind to |
+| `--max-clients` | `1000` | Maximum pending connections |
+| `--timeout` | `300` | Peer matching timeout (seconds) |
 
 ## Protocol
 

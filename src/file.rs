@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::io::{Seek, SeekFrom};
 
 use tokio::fs::File;
+use tracing::{debug, error};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkHeader {
@@ -78,11 +79,11 @@ impl FileHandle {
                         Ok(std_file_handle) => {
                             ret.push(std_file_handle);
                         }
-                        _ => println!("Error seeking in file"),
+                        _ => error!("Error seeking in file"),
                     };
                 }
                 None => {
-                    println!("Skipping {:?} b/c not in requested chunks.", handle.path);
+                    debug!(path = ?handle.path, "Skipping file, not in requested chunks");
                 }
             }
         }

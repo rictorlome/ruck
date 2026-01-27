@@ -6,6 +6,7 @@ use bytes::{Bytes, BytesMut};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tracing::{debug, info};
 
 pub struct Handshake {
     pub id: Bytes,
@@ -27,7 +28,7 @@ impl Handshake {
         let mut socket = socket;
         let mut buffer = [0; ID_SIZE + HANDSHAKE_MSG_SIZE];
         let n = socket.read_exact(&mut buffer).await?;
-        println!("The bytes: {:?}", &buffer[..n]);
+        debug!(bytes_read = n, "Received handshake from client");
         let mut outbound_msg = BytesMut::from(&buffer[..n]).freeze();
         let id = outbound_msg.split_to(ID_SIZE);
         Ok((Handshake { id, outbound_msg }, socket))
@@ -47,18 +48,15 @@ impl Handshake {
     ) -> Result<(TcpStream, Vec<u8>)> {
         let mut socket = socket;
         let bytes = &self.to_bytes();
-        // println!("client - sending handshake msg= {:?}", &bytes);
         socket.write_all(&bytes).await?;
         let mut buffer = [0; HANDSHAKE_MSG_SIZE];
         let n = socket.read_exact(&mut buffer).await?;
-        // println!("reading response");
         let response = BytesMut::from(&buffer[..n]).freeze();
-        // println!("client - handshake msg, {:?}", response);
         let key = match s1.finish(&response[..]) {
             Ok(key_bytes) => key_bytes,
             Err(e) => return Err(anyhow!(e.to_string())),
         };
-        println!("Handshake successful. Key is {:?}", key);
+        info!("Handshake successful");
         return Ok((socket, key));
     }
 

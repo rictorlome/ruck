@@ -5,28 +5,38 @@ use crate::message::{FileOfferPayload, FileRequestPayload, Message};
 use crate::password::validate_generate_pw;
 use crate::ui::prompt_user_for_file_confirmation;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 
 use tokio::net::TcpStream;
+use tracing::{error, info, warn};
 
-pub async fn send(file_paths: &Vec<PathBuf>, password: &Option<String>) -> Result<()> {
+pub async fn send(file_paths: &Vec<PathBuf>, password: &Option<String>, relay: &str) -> Result<()> {
     // Fail early if there are problems generating file handles
     let handles = FileHandle::get_file_handles(file_paths).await?;
 
     // Establish connection to server
-    let socket = TcpStream::connect("127.0.0.1:8080").await?;
+    let socket = TcpStream::connect(relay)
+        .await
+        .with_context(|| format!("Failed to connect to relay at {}", relay))?;
+    socket.set_nodelay(true)?;
 
     let pw = validate_generate_pw(password.clone())?;
-    println!(
-        "Type `ruck receive {}` on other end to receive file(s).",
-        pw
+    info!(
+        "Type `ruck receive {} --relay {}` on other end to receive file(s).",
+        pw, relay
     );
     let (handshake, s1) = Handshake::from_password(&pw)?;
     // Complete handshake, returning key used for encryption
-    let (socket, key) = handshake.negotiate(socket, s1).await?;
+    let (socket, key) = handshake
+        .negotiate(socket, s1)
+        .await
+        .map_err(|e| {
+            error!("Connection lost during handshake. The server may have rejected the connection (at capacity) or peer matching timed out.");
+            e
+        })?;
 
     let mut connection = Connection::new(socket, key);
     // Offer files, wait for requested file response
@@ -35,18 +45,27 @@ pub async fn send(file_paths: &Vec<PathBuf>, password: &Option<String>) -> Resul
     // Upload negotiated files
     let std_file_handles = FileHandle::to_stds(handles, requested_chunks).await;
     connection.upload_files(std_file_handles).await?;
-    println!("Done uploading.");
+    info!("Done uploading.");
 
     // Exit
     Ok(())
 }
 
-pub async fn receive(password: &String) -> Result<()> {
+pub async fn receive(password: &String, relay: &str) -> Result<()> {
     // Establish connection to server
-    let socket = TcpStream::connect("127.0.0.1:8080").await?;
+    let socket = TcpStream::connect(relay)
+        .await
+        .with_context(|| format!("Failed to connect to relay at {}", relay))?;
+    socket.set_nodelay(true)?;
     let (handshake, s1) = Handshake::from_password(password)?;
     // Complete handshake, returning key used for encryption
-    let (socket, key) = handshake.negotiate(socket, s1).await?;
+    let (socket, key) = handshake
+        .negotiate(socket, s1)
+        .await
+        .map_err(|e| {
+            error!("Connection lost during handshake. The server may have rejected the connection (at capacity) or peer matching timed out.");
+            e
+        })?;
     let mut connection = Connection::new(socket, key);
     // Wait for offered files, respond with desired files
     let std_file_handles = request_specific_files(&mut connection).await?;
@@ -103,28 +122,31 @@ pub async fn create_or_find_files(desired_files: Vec<FileOffer>) -> Result<Vec<S
     let mut v = Vec::new();
     for desired_file in desired_files {
         let filename = desired_file.path;
-        let file = match OpenOptions::new().append(true).open(&filename).await {
+        // Note: Resume is disabled because zstd compression breaks byte-offset resume.
+        // Files always transfer from the beginning.
+        let file = match OpenOptions::new().write(true).open(&filename).await {
             Ok(file) => {
-                println!(
-                    "File {:?} already exists. Attempting to resume download.",
-                    filename
+                warn!(
+                    file = ?filename,
+                    "File already exists, overwriting (resume disabled with compression)"
                 );
+                // Truncate the file to start fresh
+                file.set_len(0).await?;
                 file
             }
             Err(_) => File::create(&filename).await?,
         };
-        let metadata = file.metadata().await?;
-        println!(
-            "File: {:?}. Current len: {:?}, Full Size: {:?}",
-            filename.clone(),
-            metadata.len(),
-            desired_file.size
+        info!(
+            file = ?filename,
+            size = desired_file.size,
+            "Preparing to receive file"
         );
+        // Always start from 0 (no resume with compression)
         let std_file_handle = StdFileHandle::new(
             desired_file.id,
             filename,
             file,
-            metadata.len(),
+            0, // Always start from beginning
             desired_file.size,
         )
         .await?;

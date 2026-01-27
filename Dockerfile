@@ -1,17 +1,17 @@
-FROM rust:1.58 as build
+FROM rust:1.83 as build
 
 # create a new empty shell project
 RUN USER=root cargo new --bin ruck
 WORKDIR /ruck
 
-# copy over your manifests
+# copy over manifests
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 
-# this build step will cache your dependencies
+# cache dependencies
 RUN cargo build --release
 
-# copy your source tree
+# copy source tree
 RUN rm src/*.rs
 COPY ./src ./src
 
@@ -19,14 +19,23 @@ COPY ./src ./src
 RUN rm ./target/release/deps/ruck*
 RUN cargo build --release
 
-# Copy the binary into a new container for a smaller docker image
-FROM debian:buster-slim
+# minimal runtime image
+FROM debian:bookworm-slim
 
-COPY --from=build /ruck/target/release/ruck /
-USER root
+# create non-root user
+RUN useradd -r -u 1000 ruck
+
+COPY --from=build /ruck/target/release/ruck /usr/local/bin/ruck
+
+USER ruck
 
 ENV RUST_LOG=info
-ENV RUST_BACKTRACE=full
 
-CMD ["/ruck", "relay"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
+    CMD nc -z localhost 8080 || exit 1
+
+ENTRYPOINT ["/usr/local/bin/ruck"]
+CMD ["relay", "--bind", "0.0.0.0:8080"]
 
