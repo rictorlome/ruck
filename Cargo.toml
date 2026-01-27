@@ -1,6 +1,6 @@
 [package]
-name = "ruck"
-version = "0.1.0"
+name = "ruck-relay"
+version = "0.1.1"
 edition = "2021"
 description = "A croc-inspired tool for hosting relay servers and sending e2e encrypted files."
 license = "MIT"
