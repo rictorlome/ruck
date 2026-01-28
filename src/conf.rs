@@ -10,5 +10,5 @@ pub const ZSTD_COMPRESSION_LEVEL: i32 = 3; // zstd compression level for file tr
 pub const DEFAULT_RELAY: &str = "174.138.70.74:8080";
 pub const DEFAULT_BIND: &str = "0.0.0.0:8080";
 pub const DEFAULT_MAX_CLIENTS: usize = 1000;
-pub const DEFAULT_PEER_TIMEOUT_SECS: u64 = 300; // 5 minutes
+pub const DEFAULT_PEER_TIMEOUT_SECS: u64 = 60; // 1 minute
 pub const BROADCAST_CHANNEL_CAPACITY: usize = 1000; // buffer for peer connection notifications

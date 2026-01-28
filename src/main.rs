@@ -21,9 +21,9 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Initialize tracing with RUST_LOG env filter (defaults to "info")
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("ruck_relay=info".parse().unwrap()))
-        .init();
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("ruck_relay=info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let args = Cli::parse();
     match &args.command {
