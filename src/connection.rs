@@ -137,37 +137,25 @@ impl Connection {
         pb.set_message(handle.name.clone());
 
         let mut buffer = vec![0u8; BUFFER_SIZE];
-
         let mut bytes_sent: u64 = 0;
 
-        if use_compression {
-            let mut encoder = ZstdEncoder::with_quality(reader, async_compression::Level::Precise(ZSTD_COMPRESSION_LEVEL));
-            loop {
-                let n = encoder.read(&mut buffer).await?;
-                if n == 0 {
-                    break;
-                }
-
-                bytes_sent += n as u64;
-                pb.set_position(bytes_sent.min(handle.size));
-
-                let encrypted = stream_crypt.encrypt_chunk(&buffer[..n])?;
-                self.send_data_chunk(encrypted).await?;
-            }
+        let mut reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> = if use_compression {
+            Box::pin(ZstdEncoder::with_quality(reader, async_compression::Level::Precise(ZSTD_COMPRESSION_LEVEL)))
         } else {
-            let mut reader = reader;
-            loop {
-                let n = reader.read(&mut buffer).await?;
-                if n == 0 {
-                    break;
-                }
+            Box::pin(reader)
+        };
 
-                bytes_sent += n as u64;
-                pb.set_position(bytes_sent);
-
-                let encrypted = stream_crypt.encrypt_chunk(&buffer[..n])?;
-                self.send_data_chunk(encrypted).await?;
+        loop {
+            let n = reader.read(&mut buffer).await?;
+            if n == 0 {
+                break;
             }
+
+            bytes_sent += n as u64;
+            pb.set_position(bytes_sent.min(handle.size));
+
+            let encrypted = stream_crypt.encrypt_chunk(&buffer[..n])?;
+            self.send_data_chunk(encrypted).await?;
         }
 
         pb.finish_and_clear();
@@ -238,55 +226,33 @@ impl Connection {
         let file = tokio::fs::File::from_std(handle.file);
         let mut bytes_received: u64 = 0;
 
-        if use_compression {
-            let mut decoder = ZstdDecoder::new(file);
-
-            loop {
-                let (msg_type, bytes) = self.await_raw().await?;
-
-                if msg_type == MSG_TYPE_CONTROL {
-                    let decrypted = self.crypt.decrypt(bytes)?;
-                    let msg = Message::deserialize(decrypted)?;
-                    match msg {
-                        Message::FileTransferComplete => break,
-                        _ => return Err(anyhow!("Unexpected control message during transfer")),
-                    }
-                } else if msg_type == MSG_TYPE_DATA {
-                    let decrypted = stream_crypt.decrypt_chunk(&bytes)?;
-                    bytes_received += decrypted.len() as u64;
-                    pb.set_position(bytes_received.min(handle.size));
-                    decoder.write_all(&decrypted).await?;
-                } else {
-                    return Err(anyhow!("Unknown message type: {}", msg_type));
-                }
-            }
-
-            decoder.shutdown().await?;
+        let mut writer: std::pin::Pin<Box<dyn tokio::io::AsyncWrite + Send>> = if use_compression {
+            Box::pin(ZstdDecoder::new(file))
         } else {
-            let mut file = file;
+            Box::pin(file)
+        };
 
-            loop {
-                let (msg_type, bytes) = self.await_raw().await?;
+        loop {
+            let (msg_type, bytes) = self.await_raw().await?;
 
-                if msg_type == MSG_TYPE_CONTROL {
-                    let decrypted = self.crypt.decrypt(bytes)?;
-                    let msg = Message::deserialize(decrypted)?;
-                    match msg {
-                        Message::FileTransferComplete => break,
-                        _ => return Err(anyhow!("Unexpected control message during transfer")),
-                    }
-                } else if msg_type == MSG_TYPE_DATA {
-                    let decrypted = stream_crypt.decrypt_chunk(&bytes)?;
-                    bytes_received += decrypted.len() as u64;
-                    pb.set_position(bytes_received);
-                    file.write_all(&decrypted).await?;
-                } else {
-                    return Err(anyhow!("Unknown message type: {}", msg_type));
+            if msg_type == MSG_TYPE_CONTROL {
+                let decrypted = self.crypt.decrypt(bytes)?;
+                let msg = Message::deserialize(decrypted)?;
+                match msg {
+                    Message::FileTransferComplete => break,
+                    _ => return Err(anyhow!("Unexpected control message during transfer")),
                 }
+            } else if msg_type == MSG_TYPE_DATA {
+                let decrypted = stream_crypt.decrypt_chunk(&bytes)?;
+                bytes_received += decrypted.len() as u64;
+                pb.set_position(bytes_received.min(handle.size));
+                writer.write_all(&decrypted).await?;
+            } else {
+                return Err(anyhow!("Unknown message type: {}", msg_type));
             }
-
-            file.flush().await?;
         }
+
+        writer.shutdown().await?;
 
         pb.finish_and_clear();
 
