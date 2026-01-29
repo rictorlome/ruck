@@ -1,6 +1,6 @@
 use crate::conf::DEFAULT_RELAY;
 use crate::connection::Connection;
-use crate::file::{ChunkHeader, FileHandle, FileOffer, StdFileHandle};
+use crate::file::{ChunkHeader, CompressionType, FileHandle, FileOffer, StdFileHandle};
 use crate::handshake::Handshake;
 use crate::message::{FileOfferPayload, FileRequestPayload, Message};
 use crate::password::validate_generate_pw;
@@ -134,26 +134,48 @@ pub async fn create_or_find_files(desired_files: Vec<FileOffer>) -> Result<Vec<S
     let mut v = Vec::new();
     for desired_file in desired_files {
         let filename = desired_file.path;
-        // Note: Resume is disabled because zstd compression breaks byte-offset resume.
-        // Files always transfer from the beginning.
-        let file = match OpenOptions::new().write(true).open(&filename).await {
+        let can_resume = desired_file.compression == CompressionType::None;
+
+        enum Status {
+            New,
+            Overwrite,
+            Resume(u64),
+        }
+
+        let (file, start, status) = match OpenOptions::new().write(true).open(&filename).await {
             Ok(file) => {
-                println!("{} {} (overwriting)", "Downloading".yellow(), filename);
-                // Truncate the file to start fresh
-                file.set_len(0).await?;
-                file
+                let metadata = file.metadata().await?;
+                let existing_len = metadata.len();
+
+                if can_resume && existing_len > 0 && existing_len < desired_file.size {
+                    (file, existing_len, Status::Resume(existing_len))
+                } else {
+                    file.set_len(0).await?;
+                    (file, 0, Status::Overwrite)
+                }
             }
             Err(_) => {
-                println!("{} {}", "Downloading".cyan(), filename);
-                File::create(&filename).await?
+                let file = File::create(&filename).await?;
+                (file, 0, Status::New)
             }
         };
-        // Always start from 0 (no resume with compression)
+
+        match status {
+            Status::New => println!("{} {}", "Downloading".cyan(), filename),
+            Status::Overwrite => println!("{} {} (overwriting)", "Downloading".yellow(), filename),
+            Status::Resume(from) => println!(
+                "{} {} (resuming from {})",
+                "Downloading".yellow(),
+                filename,
+                crate::file::to_size_string(from)
+            ),
+        }
+
         let std_file_handle = StdFileHandle::new(
             desired_file.id,
             filename,
             file,
-            0, // Always start from beginning
+            start,
             desired_file.size,
         )
         .await?;

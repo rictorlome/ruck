@@ -10,6 +10,12 @@ use std::io::{Seek, SeekFrom};
 use tokio::fs::File;
 use tracing::{debug, error};
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum CompressionType {
+    None,
+    Zstd,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkHeader {
     pub id: u8,
@@ -21,6 +27,7 @@ pub struct FileOffer {
     pub id: u8,
     pub path: String,
     pub size: u64,
+    pub compression: CompressionType,
 }
 
 pub struct StdFileHandle {
@@ -102,10 +109,17 @@ impl FileHandle {
     }
 
     pub fn to_file_offer(&self) -> Result<FileOffer> {
+        let path = pathbuf_to_string(&self.path)?;
+        let compression = if should_compress(&path) {
+            CompressionType::Zstd
+        } else {
+            CompressionType::None
+        };
         Ok(FileOffer {
             id: self.id,
-            path: pathbuf_to_string(&self.path)?,
+            path,
             size: self.md.len(),
+            compression,
         })
     }
 
@@ -144,4 +158,22 @@ pub fn pathbuf_to_string(path: &PathBuf) -> Result<String> {
         Ok(s) => Ok(s),
         Err(_) => Err(anyhow!("Error converting {:?} to String", path)),
     }
+}
+
+pub fn should_compress(filename: &str) -> bool {
+    let skip_extensions = [
+        // Images
+        "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif",
+        // Video
+        "mp4", "mkv", "avi", "mov", "webm", "m4v",
+        // Audio
+        "mp3", "aac", "ogg", "opus", "flac", "m4a",
+        // Archives
+        "zip", "gz", "bz2", "xz", "zst", "7z", "rar", "tar.gz", "tgz",
+        // Other compressed formats
+        "pdf", "docx", "xlsx", "pptx",
+    ];
+
+    let lower = filename.to_lowercase();
+    !skip_extensions.iter().any(|ext| lower.ends_with(ext))
 }
