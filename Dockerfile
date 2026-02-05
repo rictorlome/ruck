@@ -16,16 +16,21 @@ RUN rm src/*.rs
 COPY ./src ./src
 
 # build for release
-RUN rm ./target/release/deps/ruck*
+RUN rm -f ./target/release/deps/ruck_relay* ./target/release/ruck-relay
 RUN cargo build --release
 
 # minimal runtime image
 FROM debian:bookworm-slim
 
+# install runtime deps for healthcheck
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
 # create non-root user
 RUN useradd -r -u 1000 ruck
 
-COPY --from=build /ruck/target/release/ruck /usr/local/bin/ruck
+COPY --from=build /ruck/target/release/ruck-relay /usr/local/bin/ruck-relay
 
 USER ruck
 
@@ -36,6 +41,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
     CMD nc -z localhost 8080 || exit 1
 
-ENTRYPOINT ["/usr/local/bin/ruck"]
+ENTRYPOINT ["/usr/local/bin/ruck-relay"]
 CMD ["relay", "--bind", "0.0.0.0:8080"]
-
